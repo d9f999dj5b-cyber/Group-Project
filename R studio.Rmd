@@ -4,13 +4,18 @@ output: html_document
 date: "2026-11-19"
 ---
 ```{r}
+#install.packages("skimr")   # slechts één keer nodig
+library(skimr)
 library(tidyverse)
-annot <- read_csv("protein_annotation.csv")
+annot <- read_csv("Data/protein_annotation.csv")
 head(protein_annotation)
-npx <- read_csv("proteins_npx_raw.csv")
+npx <- read_csv("Data/proteins_npx_raw.csv")
 head(proteins)
-meta <- read_csv("sample_metadata.csv")
+meta <- read_csv("Data/sample_metadata.csv")
 head(metadata)
+```
+```{r}
+skim(annot)
 ```
 
 ```{r}
