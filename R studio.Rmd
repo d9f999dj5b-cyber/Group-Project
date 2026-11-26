@@ -1,3 +1,121 @@
+<<<<<<< HEAD
+---
+title: "Groepswerk"
+output: html_document
+date: "2026-11-19"
+---
+
+```{r}
+#ik heb data/ toegevoegd voor de reads zodat ze nu in de nieuwe file kunnen worden ingelezen anders kon het niet bij mij
+#ik heb ook de heads anders geschreven met de nieuwe naam want anders lukt het niet 
+library(tidyverse)
+annot <- read_csv("data/protein_annotation.csv")
+head(protein_annotation)
+head(annot)
+npx <- read_csv("data/proteins_npx_raw.csv")
+head(proteins)
+head(npx)
+meta <- read_csv("data/sample_metadata.csv")
+head(metadata)
+head(meta)
+```
+
+```{r}
+annot %>% filter(protein %in% c("IL1B","IL6","TNF","IL18","IFNG","CXCL8")) %>%
+  select(protein, panel, pct_below_lod, pct_missing, duplicate_olink_id)
+```
+```{r}
+annot %>%
+ filter(assay %in% c("IL6","TNF","CXCL8")) %>%
+ select(protein,
+        assay,
+        panel,
+        duplicate_olink_id,
+        same_assay_as)
+```
+
+
+```{r}
+annot %>%
+ filter(panel=="Inflammation") %>%
+ arrange(desc(pct_below_lod))
+
+
+```
+
+```{r}
+zes <- c("IL1B","IL6","TNF","IL18","IFNG","CXCL8")
+
+annot %>%
+  filter(protein %in% zes) %>%
+  select(protein, olink_id, panel, pct_below_lod, pct_missing,
+         same_assay_as, duplicate_olink_id) %>%
+  arrange(protein, panel)
+
+annot %>%
+  filter(assay == "IL6")
+annot %>%
+  filter(assay == "IL1B")
+annot %>%
+  filter(assay == "TNF")
+annot %>%
+  filter(assay == "IL18")
+annot %>%
+  filter(assay == "IFNG")
+annot %>%
+  filter(assay == "CXCL8")
+
+```
+```{r}
+gekozen <- annot %>%
+  filter(panel == "Inflammation" & assay == "IL6" | assay == "IL1B" | assay == "TNF" | assay == "IL18" | assay == "IFNG" | assay == "CXCL8")
+
+#is hetzelfde als:
+gekozen <- annot %>%
+  filter(
+    panel == "Inflammation",
+    assay %in% c("IL6", "IL1B", "TNF", "IL18", "IFNG", "CXCL8")
+  )
+
+gekozen %>%
+  select(protein, assay, panel, pct_below_lod, pct_missing)
+
+#die eiwitten bewaren
+inflammatoire_eiwitten <- c(
+  "CXCL8_OID20631",
+  "IFNG",
+```
+
+
+```{r}
+"IL18",
+  "IL1B",
+  "IL6_OID20563",
+  "TNF_OID20473"
+)
+```
+```{r}
+gekozen %>%
+  select(
+    protein,
+    pct_below_lod,
+    pct_missing,
+    npx_median
+  ) %>%
+  arrange(desc(pct_below_lod))
+```
+
+```{r}
+summary(proteins$IL1B)
+hist(proteins$IL1B)
+boxplot(proteins$IL1B)
+
+```
+```{r}
+str(metadata)
+```
+
+=======
 ---
 title: "Groepswerk"
 output: html_document
@@ -113,3 +231,4 @@ boxplot(proteins$IL1B)
 str(metadata)
 ```
 
+>>>>>>> 17bbfc2488ff231d3947d5ac11842cd27a5cc009

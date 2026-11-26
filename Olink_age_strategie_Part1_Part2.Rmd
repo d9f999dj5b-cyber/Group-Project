@@ -1,0 +1,1467 @@
+---
+title: "Groepsproject LSABD – Dataset 1 (Olink-age)"
+subtitle: "Van dataset naar eigen hypothese: strategie, Part 1 en Part 2 in R"
+author: "Groep X"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+# Deze chunk zie je niet in het rapport (include=FALSE).
+# echo = TRUE    -> de code verschijnt in het HTML-rapport (nodig voor de opdracht)
+# message/warning = FALSE -> geen meldingen van packages in het rapport
+# fig.width/height -> standaardgrootte van figuren (in inch)
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 5)
+```
+
+# Inleiding: het hele traject in zes fasen
+
+Dit bestand combineert de **strategie** (het document "Strategie groepsproject LSABD") met de **R-code** van Part 1 en Part 2. Het volgt dezelfde zes fasen:
+
+| Fase | Wat | In dit bestand |
+|---|---|---|
+| A | Begrijp wat je hebt: het artikel, het design, de bestanden | tekst (hoofdstuk 2) |
+| B | **Part 1**: verkennen, voorbewerken, kwaliteitscontrole | R-code (hoofdstuk 3) |
+| C | Van data naar een **eigen hypothese** | R-code: kandidaten zoeken met een ontdek/bevestig-splitsing (hoofdstuk 4) |
+| D | **Part 2**: de hypothese testen | R-code (hoofdstuk 5) |
+| E | Vooruitblik op Part 3 en 4 | tekst (hoofdstuk 6) |
+| F | Verslag, GitHub, verdediging en valkuilen | tekst (hoofdstuk 7) |
+
+**De data in één alinea.** Plasma van 96 gezonde volwassenen in twee leeftijdsgroepen (25–35 en 55–67 jaar), longitudinaal gevolgd rond griepvaccinatie: 867 samples, meestal 10 per persoon. Per sample 1472 eiwitkolommen (Olink Explore 1536, NPX = log2-schaal) en ongeveer 70 klinische labowaarden. Drie bestanden: sample-metadata, eiwitwaarden (NPX) en eiwitannotatie, gekoppeld via `sample_kit_id`.
+
+**Het belangrijkste principe.** Jullie project is *exploratief* (handboek, 1.3): je vertrekt van bestaande data en zoekt pas daarna een hypothese. Dat mag, maar een hypothese die je uit de data haalt, kan je niet zonder meer met dezelfde data "bewijzen". Wees daar transparant over, en waar het kan: ontdek op één deel van de data en test op een ander deel. In fase C doen we dat echt, in R.
+
+## Hoe lees je dit bestand?
+
+Dit is een **R Markdown**-document: gewone tekst met daartussen grijze blokken code (*chunks*). Bij elke stap staat:
+
+- **Waarom?** Wat is het doel van deze stap?
+- **De code**, met achter `#` uitleg per regel. Alles na `#` negeert R; het is enkel commentaar voor jullie.
+- **Wat zie je / wat doe je ermee?** Hoe lees je de uitvoer en wat moet in het verslag?
+
+Voer de chunks **één voor één en in volgorde** uit met het groene pijltje rechtsboven in elke chunk. Een chunk gebruikt vaak objecten die in een vorige chunk gemaakt zijn. Sla je er een over, dan krijg je fouten zoals `object 'prot' not found`.
+
+**Spiekbriefje: R-basis die je in deze code tegenkomt**
+
+| Code | Betekenis | Voorbeeld |
+|---|---|---|
+| `x <- 5` | "stop 5 in een object met de naam `x`" (toewijzen) | `meta <- read_csv(...)` |
+| `functie(argument)` | voer een functie uit | `nrow(meta)` = aantal rijen |
+| `df$kolom` | haal één kolom uit een tabel | `meta$age` |
+| `m[rijen, kolommen]` | stukje van een matrix/tabel nemen; leeg = alles | `prot[1:5, 1:3]` = eerste 5 rijen, eerste 3 kolommen |
+| `%>%` | "pipe": neem het resultaat links en geef het door aan de functie rechts. Lees het als **"en dan"** | `meta %>% filter(age > 50)` = "neem meta, en dan hou de rijen met age > 50" |
+| `c(a, b, c)` | maak een vector (rijtje waarden) | `c("Day 0", "Day 7")` |
+| `NA` | ontbrekende waarde (*not available*) | `is.na(x)` = TRUE waar x ontbreekt |
+| `TRUE` / `FALSE` | logische waarden; bij optellen telt TRUE als 1 | `sum(is.na(x))` = aantal NA's |
+| `==`, `!=`, `>`, `%in%` | is gelijk, is niet gelijk, groter dan, "zit in de lijst" | `x %in% c("a","b")` |
+| `!` | "niet" (keert TRUE/FALSE om) | `!is.na(x)` = waar x **niet** ontbreekt |
+| `&`, `\|` | "en", "of" | `age > 50 & sex == "Male"` |
+| `factor()` | categorische variabele met vaste niveaus (groepen) | `factor(sex)` |
+| `function(x) {...}` | zelf een functie maken | zie stap 0 van Part 1 |
+
+**tidyverse-functies** (practicum 1) die vaak terugkomen:
+
+| Functie | Wat doet ze? |
+|---|---|
+| `filter()` | rijen houden die aan een voorwaarde voldoen |
+| `select()` | kolommen kiezen |
+| `mutate()` | nieuwe kolom maken of een kolom aanpassen |
+| `arrange()` | rijen sorteren |
+| `group_by()` + `summarise()` | per groep iets berekenen (bv. gemiddelde per batch) |
+| `count()` | tellen hoeveel rijen per groep |
+| `pivot_longer()` / `pivot_wider()` | tabel van breed naar lang (of omgekeerd) omzetten |
+| `ggplot(data, aes(x, y)) + geom_...()` | een figuur maken: data + welke kolom op welke as + type figuur |
+
+**Tabel vs. matrix.** `meta` is een *tibble* (tabel; elke kolom kan een ander type hebben: tekst, getal, ...). `prot` is een *matrix*: alles is een getal, rijen = samples, kolommen = eiwitten. Voor rekenwerk (PCA, correlaties) is een matrix nodig.
+
+# Fase A – Begrijp wat je hebt (vóór je code schrijft)
+
+Voor je een vraag kan bedenken, moet je drie dingen weten: wat het artikel al gedaan heeft, hoe de studie opgezet is, en hoe de bestanden in elkaar zitten. Deze fase is lezen en noteren; de R-controles ervan zitten in Part 1 (stap 1 en 2).
+
+## A1. Lees het artikel gericht
+
+Lees het abstract, Fig. 1a (het design), Fig. 1b–c, Extended Data Fig. 1 en in de Methods de paragraaf "Olink analysis". Het grootste deel van het artikel gaat over single-cell RNA-seq en flowcytometrie, die niet in jullie data zitten. Wat er al met de Olink-data gebeurd is:
+
+| Wat het artikel deed | Hoe | Waar |
+|---|---|---|
+| Welke eiwitten verschillen tussen jong en oud op baseline? | per eiwit `NPX(bridged) ~ age group + CMV + sex` (lme4), FDR < 0,05, griepjaar 1 dag 0 | Fig. 1b |
+| Is dat leeftijdsverschil stabiel? | dezelfde analyse op jaar 2 dag 0, en de twee jaren vergeleken | Ext. Data Fig. 1b–c |
+| Hoe evolueren de topeiwitten in de tijd? | CXCL17 en WNT9A per donor over alle bezoeken | Fig. 1c |
+| Zijn ontstekingsmerkers hoger bij ouderen? | TNF, IL-6, IL-1β en IL-11 over de tijd, jong vs oud | Ext. Data Fig. 1a |
+
+**Gevolg:** "verschilt eiwit X tussen jong en oud op baseline, gecorrigeerd voor CMV en geslacht" is precies wat het artikel deed. Jullie vraag moet daarvan verschillen. De auteurs deden met de eiwitten *niet*: de respons op vaccinatie (dag 7, dag 90), de vergelijking met de groep zonder vaccinatie, interacties, en de koppeling met de klinische labo's. Daar ligt ruimte voor een eigen vraag.
+
+## A2. Begrijp het design (les 1: "garbage in = garbage out")
+
+| Element | In dataset 1 | Gevolg voor de analyse |
+|---|---|---|
+| Type studie | observationeel, prospectief cohort | je meet associaties, geen oorzaak-gevolg |
+| Eenheid (wat is N?) | 96 donoren, 867 samples | samples van dezelfde persoon zijn pseudoreplicaten: N = aantal donoren |
+| Leeftijd | twee groepen (25–35 en 55–67 jaar) | behandel leeftijd als binaire factor; geen uitspraken over 80-plussers |
+| Tijd | reeksen griepjaar 1, 2 (en 3) en "Immune Variation" zonder vaccinatie; dag 0, 7, 90; losse bezoeken | ingebouwde vergelijkingen: voor/na vaccinatie, met/zonder vaccinatie, jaar 1 vs jaar 2 |
+| Technische factoren | 6 Olink-batches, 27 platen; batches vallen deels samen met het jaar | batch-effect: controleren en corrigeren of als covariaat opnemen |
+| Covariaten | geslacht, CMV-status, BMI, ~70 labowaarden | mogelijke confounders of extra uitkomsten |
+
+Les 1 maakt het onderscheid tussen **factoren van interesse** (wat je wil testen) en **confounders** (wat het resultaat beïnvloedt maar je niet interesseert: batch, geslacht, ...).
+
+## A3. Ken je bestanden
+
+- **sample_metadata.csv**: één rij per sample (wie, wanneer, batch, labo's).
+- **proteins_npx_raw.csv**: één rij per sample, één kolom per eiwit. "raw" betekent hier: niet gecorrigeerd tussen batches (het artikel gebruikte "bridged" NPX).
+- **protein_annotation.csv**: één rij per eiwit (panel, % onder detectielimiet, alias). Let op: een paar eiwitten (bv. IL-6) zijn op alle vier panels gemeten en staan er vier keer in (bv. `IL6_OID20563` = Inflammation-panel).
+
+De meeste fouten in studentenprojecten komen van samples of eiwitten die verkeerd gekoppeld worden (handboek). Part 1 controleert daarom eerst de ID's.
+
+## A4. Leg doel, vraag en hypothese uit elkaar (les 1)
+
+| Begrip | Betekenis | Voorbeeld voor dataset 1 |
+|---|---|---|
+| Goal | het grote, lange-termijn doel | vaccins beter laten werken bij ouderen |
+| Aim | wat dit project wil bereiken | nagaan hoe het plasma-eiwitprofiel na vaccinatie verschilt met leeftijd |
+| Research question | de precieze vraag | verschilt de stijging van eiwit X op dag 7 tussen jong en oud? |
+| Hypothesis | een toetsbare voorspelling | de stijging van X is kleiner bij ouderen, onafhankelijk van geslacht en CMV |
+| Objectives | concrete stappen | data voorbewerken; ΔX berekenen per donor; lineair model fitten; assumpties en robuustheid nagaan |
+
+# Fase B – Part 1: verkennen, voorbewerken en kwaliteitscontrole
+
+Het doel van Part 1 is een dataset waarop je betrouwbaar kan testen, plus een lijst van elke beslissing en waarom. Part 1 is ook je belangrijkste bron van ideeën voor de hypothese: kijk dus niet enkel naar fouten, maar ook naar patronen.
+
+| Guiding question | Stap hieronder | Theorie (les 2) |
+|---|---|---|
+| Hoeveel samples en features, welk type? | stap 1–3 | nominaal, ordinaal, continu, discreet |
+| Waar ontbreken waarden, en waarom? | stap 4 | MCAR, MAR, MNAR; imputatie of complete-case |
+| Gedragen samples of features zich anders? | stap 7 | z-score of IQR-methode; outlier niet blind verwijderen |
+| Welke preprocessing is nodig? | stap 5, 8 | normalisatie ≠ standaardisatie; log; filteren verhoogt power |
+| Clusteren samples op biologie of op techniek? | stap 6, 9 | PCA, heatmap; patroon gelinkt aan batch = wegwerken |
+| Is de data geschikt voor de volgende delen? | stap 10 | pseudoreplicatie (les 1) |
+
+**Valkuil:** filter nooit op basis van de groepen die je later vergelijkt (bijvoorbeeld "hou enkel eiwitten die verschillen tussen jong en oud"). Filter op criteria zonder labels: % onder LOD, % missing, variantie over alle samples.
+
+
+## Stap 0 – Voorbereiding
+
+**Wat doe je?**
+
+1. Maak in RStudio een nieuw project (*File → New Project → New Directory*), bv. `olink_age_project`. Dat wordt later ook jullie GitHub-repository. **Waarom een project?** R zoekt bestanden dan automatisch vanaf die map, waardoor `"data/sample_metadata.csv"` werkt op ieders computer.
+2. Maak in die map een submap `data/` en zet daar de drie bestanden in:
+   - `sample_metadata.csv` (867 samples × 76 variabelen)
+   - `proteins_npx_raw.csv` (867 samples × 1481 eiwitkolommen)
+   - `protein_annotation.csv` (1481 eiwitten × 12 kolommen)
+3. Zet dit `.Rmd`-bestand in de hoofdmap van het project. Op het einde maak je met **Knit** een HTML-rapport.
+
+### Packages installeren
+
+**Waarom?** Een *package* is een verzameling extra functies die iemand anders geschreven heeft. Je installeert ze **één keer** op je computer (`install.packages`), maar je moet ze **elke sessie** opnieuw laden (`library`). De installatie-chunk heeft `eval=FALSE`, zodat hij niet telkens opnieuw installeert bij het knitten. Voer hem één keer manueel uit (selecteer de regels en druk Ctrl+Enter).
+
+```{r install, eval=FALSE}
+install.packages(c("tidyverse", "circlize"))          # packages van CRAN (de gewone R-bibliotheek)
+if (!requireNamespace("BiocManager", quietly = TRUE)) # is BiocManager nog niet geïnstalleerd?
+  install.packages("BiocManager")                     #   -> installeer het dan
+BiocManager::install(c("ComplexHeatmap", "limma"))    # packages van Bioconductor (biologie-packages)
+```
+
+```{r packages}
+library(tidyverse)        # inlezen (read_csv), tabellen bewerken (filter, mutate, ...) en ggplot2 (practicum 1)
+library(ComplexHeatmap)   # heatmaps met annotatiebalken (practicum 2)
+library(circlize)         # colorRamp2(): kleurenschaal voor de heatmap
+library(limma)            # removeBatchEffect(): batchcorrectie (limma komt ook mee met edgeR, practicum 3)
+theme_set(theme_classic()) # alle ggplot-figuren krijgen een sobere witte achtergrond
+set.seed(2026)            # sommige stappen kiezen willekeurig (bv. 9 eiwitten voor een figuur).
+                          # Met set.seed() krijg je elke keer dezelfde "willekeurige" keuze -> reproduceerbaar
+```
+
+### Drempels en hulpfuncties
+
+**Waarom?** Bij preprocessing maak je keuzes (bv. "vanaf hoeveel % ontbrekende waarden gooi ik een eiwit weg?"). Die keuzes zetten we hier bovenaan in één lijst. Dan zie je ze in één oogopslag en kan je ze makkelijk aanpassen. In het verslag moet je ze **motiveren**.
+
+```{r thresholds}
+drempel <- list(            # list() = een verzameling waarden met een naam
+  max_belowLOD   = 50,      # eiwit weg als >50% van de samples onder de detectielimiet (LOD) ligt
+  max_na_protein = 20,      # eiwit weg als >20% van de samples ontbreekt
+  max_na_clin    = 30,      # klinische labovariabele weg als >30% ontbreekt
+  outlier_z      = 4,       # een sample is "afwijkend" als het >4 robuuste SD's van de mediaan ligt
+  skew_for_log   = 1        # labovariabele log2-transformeren als de scheefheid > 1 is
+)
+# Later gebruik je bv. drempel$max_belowLOD om de waarde 50 op te halen.
+```
+
+**Een logboek van beslissingen.** Elke keer dat we iets verwijderen of transformeren, schrijven we dat in een tabel `beslissingen`. Op het einde heb je zo een overzicht voor de Methods van je verslag.
+
+```{r logbook}
+# Een lege tabel met 3 tekstkolommen
+beslissingen <- tibble(stap = character(), beslissing = character(), reden = character())
+
+# Zelfgemaakte functie: voegt één rij toe aan de tabel 'beslissingen'.
+# (<<- betekent: pas het object 'beslissingen' aan dat BUITEN de functie bestaat)
+log_beslissing <- function(stap, beslissing, reden) {
+  beslissingen <<- add_row(beslissingen, stap = stap, beslissing = beslissing, reden = reden)
+}
+```
+
+**Twee hulpfuncties** die R niet standaard heeft:
+
+```{r helpers}
+# Robuuste z-score: hoeveel "robuuste standaardafwijkingen" ligt een waarde van de mediaan?
+# Gewone z-score = (x - gemiddelde) / SD. Maar een gemiddelde en SD worden zelf sterk
+# beïnvloed door outliers. Mediaan en MAD (median absolute deviation) niet.
+# Daarom gebruiken we die om outliers op te sporen (les 2).
+robust_z <- function(x) (x - median(x, na.rm = TRUE)) / mad(x, na.rm = TRUE)
+#                                       na.rm = TRUE -> negeer ontbrekende waarden (NA)
+
+# Scheefheid (skewness): 0 = symmetrisch, > 0 = lange staart naar rechts (typisch voor bv. CRP),
+# < 0 = lange staart naar links. Vuistregel: > 1 is sterk scheef.
+skewness <- function(x) {
+  x <- x[!is.na(x)]                      # hou enkel de waarden die niet ontbreken
+  mean((x - mean(x))^3) / sd(x)^3        # formule van de scheefheid
+}
+
+# Kleine test zodat je ziet wat de functies doen:
+robust_z(c(1, 2, 3, 4, 100))   # de 100 krijgt een heel grote z-score -> outlier
+skewness(c(1, 1, 2, 2, 3, 50)) # positief: lange staart naar rechts
+```
+
+## Stap 1 – Data inlezen
+
+**Waarom?** Voor we iets analyseren, moeten we zeker zijn dat de bestanden correct ingelezen zijn en dat de sample-ID's in de verschillende bestanden overeenkomen. Anders koppel je straks eiwitwaarden aan de verkeerde persoon.
+
+```{r read}
+# read_csv() leest een csv-bestand in als tibble (tabel).
+# show_col_types = FALSE -> R toont niet de lijst met kolomtypes (enkel om de uitvoer kort te houden)
+meta  <- read_csv("data/sample_metadata.csv",    show_col_types = FALSE)  # 1 rij per sample: wie, wanneer, labo's
+npx   <- read_csv("data/proteins_npx_raw.csv",   show_col_types = FALSE)  # 1 rij per sample: eiwitwaarden
+annot <- read_csv("data/protein_annotation.csv", show_col_types = FALSE)  # 1 rij per eiwit: panel, % onder LOD, ...
+
+dim(meta)       # dim() = aantal rijen en kolommen
+dim(npx)
+dim(annot)
+npx[1:5, 1:6]   # eerste 5 rijen en eerste 6 kolommen bekijken
+head(annot)     # head() = de eerste 6 rijen
+```
+
+**Wat zie je?** `meta` heeft 867 rijen (samples), `npx` 867 rijen en 1482 kolommen (1 kolom met het sample-ID + 1481 eiwitten), `annot` 1481 rijen (één per eiwit). De eerste kolom van `npx` heet `sample_kit_id`: dat is de sleutel die ook in `meta` zit.
+
+**Controle:** zitten in beide bestanden dezelfde samples?
+
+```{r check-ids}
+# %in% vraagt per element: "zit dit ook in de andere lijst?" -> TRUE/FALSE per sample
+# all() geeft TRUE als ALLE elementen TRUE zijn
+all(npx$sample_kit_id %in% meta$sample_kit_id)   # zitten alle eiwit-samples in de metadata?
+all(meta$sample_kit_id %in% npx$sample_kit_id)   # en omgekeerd?
+any(duplicated(meta$sample_kit_id))              # komt een sample-ID twee keer voor? (moet FALSE zijn)
+```
+
+**Wat zie je?** `TRUE`, `TRUE`, `FALSE`: alles klopt.
+
+### Eiwitdata omzetten naar een matrix
+
+**Waarom?** Voor berekeningen (PCA, correlatie, ...) heb je een **matrix met enkel getallen** nodig. Het sample-ID mag dus geen gewone kolom zijn, maar wordt de **rijnaam**. Daarnaast moeten metadata en eiwitdata **in exact dezelfde volgorde** staan: rij 1 van `meta` hoort dan bij rij 1 van `prot`, enzovoort.
+
+```{r to-matrix}
+prot <- npx %>%                              # neem de eiwittabel, en dan...
+  column_to_rownames("sample_kit_id") %>%    # ...maak van de kolom sample_kit_id de rijnamen, en dan...
+  as.matrix()                                # ...zet de tabel om naar een numerieke matrix
+
+# match(a, b) geeft voor elk element van a de positie in b.
+# arrange(match(...)) sorteert meta dus in de volgorde van de rijnamen van prot.
+meta <- meta %>% arrange(match(sample_kit_id, rownames(prot)))
+
+# stopifnot() stopt met een foutmelding als de voorwaarde FALSE is.
+# identical() controleert of beide vectoren exact gelijk zijn (zelfde ID's, zelfde volgorde).
+stopifnot(identical(meta$sample_kit_id, rownames(prot)))
+```
+
+**Wat zie je?** Niets: geen uitvoer betekent dat de controle geslaagd is. Bij een fout zou R stoppen.
+
+### Kortere kolomnamen
+
+**Waarom?** De originele namen zijn lang (`subject.subjectGuid`, `sample.subjectAgeAtDraw`, ...), wat de code moeilijk leesbaar maakt. We maken korte kopieën. Tegelijk zetten we categorische variabelen om naar een **factor**. Dan weet R dat het om groepen gaat (en niet om tekst), en kan je zelf bepalen welke groep de referentie is.
+
+```{r rename}
+meta <- meta %>%
+  mutate(sample    = sample_kit_id,                        # ID van het bloedstaal
+         donor     = subject.subjectGuid,                  # ID van de persoon
+         cohort    = cohort.cohortGuid,                    # BR1 = jong, BR2 = ouder cohort
+         sex       = factor(subject.biologicalSex),        # Female/Male als factor
+         age       = sample.subjectAgeAtDraw,              # leeftijd op het moment van de bloedafname
+         age_group = factor(subject.ageGroup,              # leeftijdsgroep als factor,
+                            levels = c("Young Adult", "Older Adult")), # met "Young Adult" als eerste
+                                                           # niveau = referentiegroep in modellen
+         cmv       = factor(cmv_status),                   # CMV-positief/negatief (herpesvirus)
+         visit     = sample.visitName,                     # naam van het bezoek
+         days      = sample.daysSinceFirstVisit,           # dagen sinds het eerste bezoek
+         draw_year = factor(sample.drawYear),              # jaar van de afname
+         batch     = factor(olink_batch_id),               # Olink-run waarin het staal gemeten is
+         plate     = factor(olink_plate_id))               # Olink-plaat binnen die run
+```
+
+## Stap 2 – Structuur van de data (guiding question 1)
+
+### Samples, donoren, features
+
+**Waarom?** Guiding question 1 vraagt hoeveel samples en features er zijn. Het is ook belangrijk om te weten hoeveel *verschillende personen* er zijn, want dat bepaalt je echte N.
+
+```{r structure}
+tibble(                                               # maak een klein overzichtstabelletje
+  wat    = c("Samples", "Donoren", "Eiwitkolommen", "Olink-panels", "Olink-batches",
+             "Olink-platen", "Metadata-variabelen"),
+  aantal = c(nrow(prot),                # nrow = aantal rijen = aantal samples
+             n_distinct(meta$donor),    # n_distinct = aantal VERSCHILLENDE waarden = aantal personen
+             ncol(prot),                # ncol = aantal kolommen = aantal eiwitten
+             n_distinct(annot$panel),
+             n_distinct(meta$batch),
+             n_distinct(meta$plate),
+             ncol(meta) - 12))          # -12: de 12 korte kopieën die we net maakten niet meetellen
+table(annot$panel)                      # table() telt hoe vaak elke waarde voorkomt
+```
+
+**Hoeveel samples heeft elke persoon?**
+
+```{r per-donor}
+spd <- count(meta, donor, name = "n_samples")  # tel het aantal rijen (samples) per donor
+summary(spd$n_samples)                         # minimum, kwartielen, mediaan, gemiddelde, maximum
+
+ggplot(spd, aes(n_samples)) +                  # figuur van de tabel spd, met n_samples op de x-as
+  geom_bar(fill = "grey60") +                  # staafdiagram: hoeveel donoren hebben 1, 2, ... samples
+  labs(x = "Aantal samples per donor", y = "Aantal donoren")   # astitels
+```
+
+**Wat noteer je?** 96 donoren met meestal 10 samples. Samples van dezelfde persoon zijn dus **niet onafhankelijk**: het zijn *pseudoreplicaten* (les 1). Voor een vraag over jong vs. oud is **N = het aantal donoren (96), niet 867**. Wie dat vergeet, krijgt te kleine standaardfouten en te kleine p-waarden. Oplossingen (les 1): (1) per donor één waarde (of een gemiddelde/verschil) gebruiken, of (2) een mixed model met een random effect per donor.
+
+### De bezoeken (tijdspunten) ontrafelen
+
+**Waarom?** De kolom `visit` bevat waarden zoals `"Flu Year 1 Day 7"`. Daar zitten twee dingen in: de **reeks** (griepvaccinatie jaar 1, 2, 3, of "Immune Variation" = een reeks *zonder* vaccinatie, zie Fig. 1a van de paper) en de **dag** (0, 7, 90 of een los "stand-alone" bezoek). Om bv. dag 0 met dag 7 te vergelijken, heb je die als aparte variabelen nodig.
+
+```{r visits}
+table(meta$visit)      # welke bezoeknamen bestaan er, en hoe vaak?
+
+meta <- meta %>%
+  mutate(
+    # case_when: "als ... dan ...", van boven naar onder. str_detect zoekt een stukje tekst.
+    series = case_when(str_detect(visit, "Flu Year 1")       ~ "Flu Y1",
+                       str_detect(visit, "Flu Year 2")       ~ "Flu Y2",
+                       str_detect(visit, "Flu Year 3")       ~ "Flu Y3",
+                       str_detect(visit, "Immune Variation") ~ "No vax"),
+    # "Day 0$": de $ betekent "op het einde van de tekst". Zo wordt "Day 0" niet verward met "Day 90".
+    day = case_when(str_detect(visit, "Day 0$")  ~ "Day 0",
+                    str_detect(visit, "Day 7$")  ~ "Day 7",
+                    str_detect(visit, "Day 90$") ~ "Day 90",
+                    TRUE ~ "Stand-alone"),          # TRUE ~ ... = "in alle andere gevallen"
+    # factor met een vaste, logische volgorde (anders sorteert R alfabetisch)
+    day = factor(day, levels = c("Day 0", "Day 7", "Day 90", "Stand-alone")),
+    vaccinated = series != "No vax")                # TRUE als het een vaccinatiereeks is
+table(meta$series, meta$day)   # kruistabel: reeks (rijen) x dag (kolommen) -> controle
+```
+
+**Wat zie je?** De kruistabel toont hoeveel samples er per reeks en per dag zijn. Zo zie je meteen dat jaar 1 het meest volledig is.
+
+### Leeftijd en groepen
+
+**Waarom?** Hoe zijn leeftijd, geslacht en CMV verdeeld? We tellen per **persoon** en niet per sample, anders tellen mensen met veel samples zwaarder door.
+
+```{r age}
+donors <- meta %>%
+  group_by(donor) %>%   # maak groepjes per persoon
+  slice(1) %>%          # hou van elk groepje enkel de eerste rij
+  ungroup()             # haal de groepering weer weg
+# -> donors heeft 1 rij per persoon
+
+table(donors$age_group, donors$sex)   # hoeveel jonge/oudere mannen en vrouwen?
+table(donors$age_group, donors$cmv)   # hoeveel CMV+ per leeftijdsgroep?
+
+ggplot(donors, aes(age, fill = age_group)) +          # leeftijd op de x-as, kleur = leeftijdsgroep
+  geom_histogram(binwidth = 2, colour = "white") +    # histogram met staven van 2 jaar breed
+  labs(x = "Leeftijd bij eerste afname", y = "Aantal donoren", fill = NULL)
+```
+
+**Wat noteer je?** Dit is het longitudinale deel van de Sound Life-cohorte: twee leeftijdsgroepen (jong 25–35 jaar, ouder 55–67 jaar), geen continuüm van 25 tot 90 jaar. Leeftijd is dus eigenlijk een **tweegroepenvergelijking**. Controleer ook de balans voor geslacht en CMV.
+
+### Type van elke variabele
+
+**Waarom?** Guiding question 1 vraagt het type van elke variabele. Dat bepaalt later welke test of figuur je kan gebruiken (bv. een continue uitkomst → lineaire regressie; een binaire uitkomst → logistische regressie).
+
+- **nominaal**: categorieën zonder volgorde (geslacht, CMV, ID's)
+- **ordinaal**: categorieën met een volgorde (dag 0 < dag 7 < dag 90; jong < oud)
+- **discreet**: tellingen of gehele getallen (aantal dagen)
+- **continu**: metingen op een continue schaal (NPX, labowaarden)
+
+De code hieronder doet een automatische eerste indeling. **Controleer die zelf.**
+
+```{r var-types}
+var_info <- tibble(
+  variabele = colnames(meta),                                 # naam van elke kolom
+  # map_chr(meta, ~ ...) voert de formule na ~ uit op ELKE kolom (.x = die kolom)
+  klasse_R  = map_chr(meta, ~ class(.x)[1]),                  # hoe R de kolom opslaat (numeric, character, ...)
+  n_uniek   = map_int(meta, ~ n_distinct(.x, na.rm = TRUE)),  # aantal verschillende waarden
+  pct_NA    = round(100 * map_dbl(meta, ~ mean(is.na(.x))), 1)) %>%  # % ontbrekend
+  mutate(type = case_when(                                    # type toekennen, regel per regel:
+    variabele %in% c("sample", "donor", "sample_kit_id", "subject.subjectGuid",
+                     "subject_guid", "plate", "olink_plate_id") ~ "nominaal (ID/label)",
+    variabele %in% c("age_group", "subject.ageGroup")          ~ "ordinaal (2 niveaus)",
+    variabele %in% c("day", "visit", "sample.visitName", "draw_year",
+                     "sample.drawYear")                         ~ "ordinaal",
+    klasse_R %in% c("character", "factor", "logical")           ~ "nominaal",
+    variabele %in% c("age", "sample.subjectAgeAtDraw", "subject.birthYear",
+                     "subject.ageAtFirstDraw", "days", "sample.daysSinceFirstVisit",
+                     "n_missing_npx")                           ~ "discreet",
+    klasse_R == "numeric"                                       ~ "continu"))
+count(var_info, type)     # hoeveel variabelen van elk type?
+knitr::kable(var_info)    # kable() toont de tabel netjes in het HTML-rapport
+```
+
+De eiwitwaarden (NPX) zijn allemaal **continu** (log2-schaal).
+
+**Wat doe je ermee?** Neem een beknopte versie van deze tabel op in het verslag (of in de supplementen). Leeftijd in jaren is strikt genomen discreet, maar we behandelen het als continu.
+
+## Stap 3 – Dubbele eiwitkolommen samenvoegen
+
+**Waarom?** De data bevatten 1481 eiwitkolommen, maar Olink Explore 1536 meet 1472 eiwitten. Negen eiwitten staan er twee keer in, onder een oude en een nieuwe gennaam (bv. `CD97` = `ADGRE5`, `WISP1` = `CCN4`). De kolom `same_assay_as` in de annotatie toont welke paren bij elkaar horen. In de ene batch kreeg een eiwit de ene naam, in de andere batch de andere naam. Zonder samenvoegen zou elk van die eiwitten deels "ontbreken".
+
+**Eerst controleren**: is een paar echt complementair (nooit allebei gemeten, nooit allebei leeg)?
+
+```{r alias-check}
+pairs <- annot %>%
+  filter(!is.na(same_assay_as)) %>%                 # enkel eiwitten die een "tweelingnaam" hebben
+  transmute(naam1 = pmin(protein, same_assay_as),   # pmin/pmax: zet de twee namen alfabetisch,
+            naam2 = pmax(protein, same_assay_as)) %>% #   zodat CD97-ADGRE5 en ADGRE5-CD97 hetzelfde paar zijn
+  distinct()                                        # dubbele rijen weg -> 9 unieke paren
+
+pairs %>% mutate(
+  # map2_int loopt tegelijk over naam1 en naam2 (.x = naam1, .y = naam2) en telt per paar:
+  beide_gemeten = map2_int(naam1, naam2, ~ sum(!is.na(prot[, .x]) & !is.na(prot[, .y]))), # beide aanwezig
+  geen_van_twee = map2_int(naam1, naam2, ~ sum( is.na(prot[, .x]) &  is.na(prot[, .y]))))  # beide leeg
+```
+
+**Wat zie je?** In beide kolommen overal 0: voor elk sample is precies één van de twee namen ingevuld. We kunnen ze dus veilig samenvoegen. We houden de naam die het vaakst gebruikt werd (de nieuwe gennaam).
+
+```{r alias-merge}
+for (i in seq_len(nrow(pairs))) {          # herhaal voor elk paar i = 1, 2, ..., 9
+  a <- pairs$naam1[i]                      # eerste naam van het paar
+  b <- pairs$naam2[i]                      # tweede naam
+  # welke naam heeft de meeste ingevulde waarden? die houden we:
+  houd <- if (sum(!is.na(prot[, a])) >= sum(!is.na(prot[, b]))) a else b
+  weg  <- setdiff(c(a, b), houd)           # de andere naam
+  # coalesce: neem de waarde van 'houd'; als die NA is, neem dan de waarde van 'weg'
+  prot[, houd] <- coalesce(prot[, houd], prot[, weg])
+  prot <- prot[, colnames(prot) != weg]    # verwijder de kolom 'weg'
+}
+ncol(prot)   # moet 1472 zijn
+
+annot <- annot %>% filter(protein %in% colnames(prot))  # annotatie ook beperken tot de overgebleven eiwitten
+log_beslissing("Aliasparen", "9 dubbele eiwitkolommen (oude/nieuwe gennaam) samengevoegd -> 1472 eiwitten",
+               "Zelfde Olink-assay, in verschillende batches onder een andere naam gerapporteerd")
+```
+
+## Stap 4 – Missing values (guiding question 2)
+
+Guiding question 2: *waar* ontbreken waarden, *waarom*, en *wat doen we ermee*?
+
+### Eiwitdata
+
+```{r na-prot}
+# is.na(prot) maakt een matrix met TRUE waar een waarde ontbreekt.
+na_prot   <- colSums(is.na(prot))   # per eiwit (kolom): aantal ontbrekende waarden
+na_sample <- rowSums(is.na(prot))   # per sample (rij): aantal ontbrekende waarden
+
+cat("Totaal % missing:", round(100 * mean(is.na(prot)), 2), "%\n")  # cat() = tekst printen
+table(na_prot)        # hoeveel eiwitten hebben 0, 1, 2, ..., 144 ontbrekende waarden?
+summary(na_sample)    # verdeling van het aantal missings per sample
+```
+
+**Wat zie je?** Minder dan 1% ontbreekt. De meeste eiwitten hebben geen enkele missing, maar een groepje eiwitten mist er precies 144. Zo'n rond getal is verdacht: het wijst op één hele batch.
+
+**Ontbreken die waarden willekeurig?** We tellen per batch:
+
+```{r na-batch}
+na_by_batch <- sapply(                       # sapply: voer een functie uit op elk stuk van een lijst
+  split(as.data.frame(is.na(prot)), meta$batch),  # split: verdeel de TRUE/FALSE-tabel in stukken per batch
+  colSums)                                   # en tel in elk stuk de missings per eiwit
+# Resultaat: matrix met eiwitten in de rijen en batches in de kolommen
+na_by_batch[rowSums(na_by_batch) > 0, ]      # toon enkel eiwitten die ergens een missing hebben
+```
+
+**Welk type missing data?** (les 2)
+
+| Type | Betekenis | Bij ons |
+|---|---|---|
+| MCAR (*missing completely at random*) | ontbreken staat los van alles | losse missings in enkele samples (individuele QC-fails) |
+| MAR (*missing at random*) | ontbreken hangt af van een **gemeten** variabele | eiwitten die ontbreken in één batch; labo's die enkel bij bepaalde bezoeken gemeten zijn |
+| MNAR (*missing not at random*) | ontbreken hangt af van de **waarde zelf** | waarden onder de detectielimiet (LOD): lage waarden zijn systematisch onbetrouwbaar |
+
+**Interpretatie:** een tiental eiwitten ontbreekt in **alle** 144 samples van batch Q-04064. Ze werden in die run niet gerapporteerd (bv. gefaalde assay-QC). Dat is geen toeval maar *structureel* missing (afhankelijk van de batch). Een paar losse missings zijn waarschijnlijk individuele QC-fails.
+
+**Beslissing:** eiwitten met >`r drempel$max_na_protein`% missing verwijderen. De rest houden we. Een batch-specifiek ontbrekend eiwit vullen we *niet* in: imputatie (mediaan, kNN, ..., les 2) over een volledige batch zou 144 verzonnen waarden opleveren. Voor PCA en clustering gebruiken we enkel volledig gemeten eiwitten. Statistische modellen (Part 2–3) laten de samples met NA voor dat eiwit gewoon weg (*complete-case*).
+
+### Onder de detectielimiet (LOD)
+
+**Waarom?** Elk eiwit heeft een **detectielimiet (LOD)**: onder die concentratie kan Olink het eiwit niet betrouwbaar meten. Olink geeft dan toch een getal, maar dat is grotendeels ruis. Een eiwit dat bij de meeste mensen onder de LOD ligt, levert dus geen bruikbare informatie op. De annotatie bevat per eiwit het % samples onder de LOD (`pct_below_lod`).
+
+```{r lod}
+ggplot(annot, aes(pct_below_lod)) +                    # histogram van % onder LOD, 1 waarde per eiwit
+  geom_histogram(bins = 50, fill = "darkorange") +
+  geom_vline(xintercept = drempel$max_belowLOD,        # rode stippellijn op onze drempel (50%)
+             linetype = 2, colour = "red") +
+  labs(x = "% samples onder LOD", y = "Aantal eiwitten")
+
+sum(annot$pct_below_lod > drempel$max_belowLOD)        # hoeveel eiwitten liggen boven de drempel?
+
+annot %>%
+  group_by(panel) %>%                                  # per Olink-panel:
+  summarise(n = n(),                                   #   aantal eiwitten
+            n_boven_drempel = sum(pct_below_lod > drempel$max_belowLOD))  # en hoeveel boven de drempel
+
+ggplot(meta, aes(batch, pct_below_lod)) + geom_boxplot() +   # per sample: % eiwitten onder LOD, per batch
+  labs(x = "Olink-batch", y = "% eiwitten onder LOD per sample")
+```
+
+**Wat zie je?** De meeste eiwitten liggen bijna nooit onder de LOD, maar er is een staart van eiwitten die vaak onder de LOD liggen (vooral in het Neurology- en Oncology-panel). De laatste figuur toont of sommige batches gevoeliger waren.
+
+### Filter toepassen
+
+```{r filter-proteins}
+weg_lod <- annot$protein[annot$pct_below_lod > drempel$max_belowLOD]       # namen van eiwitten met >50% onder LOD
+weg_na  <- names(na_prot)[100 * na_prot / nrow(prot) > drempel$max_na_protein] # namen van eiwitten met >20% missing
+weg_p   <- union(weg_lod, weg_na)              # union = samenvoegen zonder dubbels
+prot    <- prot[, !colnames(prot) %in% weg_p]  # hou de kolommen die NIET in weg_p zitten
+annot   <- annot %>% filter(protein %in% colnames(prot))  # annotatie mee aanpassen
+dim(prot)                                      # hoeveel samples x eiwitten blijven over?
+
+log_beslissing("Filter eiwitten",
+               paste(length(weg_p), "eiwitten verwijderd (>", drempel$max_belowLOD,
+                     "% onder LOD of >", drempel$max_na_protein, "% missing);",
+                     ncol(prot), "eiwitten over"),     # paste() plakt tekst en getallen aan elkaar
+               "Metingen grotendeels onder de detectielimiet zijn ruis en niet informatief")
+```
+
+**Let op:** dit filter hangt niet af van leeftijdsgroep of andere labels, en dat is ook de vereiste voor Part 3. Een eiwit dat bij jongeren onder LOD ligt en bij ouderen niet, kan wel interessant zijn. Bekijk `weg_lod` dus even (typ `weg_lod` in de console).
+
+### Metadata en klinische labo's
+
+**Waarom?** Ook in de metadata ontbreken waarden. Bekijk welke variabelen veel missen.
+
+```{r na-meta, fig.height = 7}
+na_meta <- tibble(variabele = colnames(meta),
+                  pct_NA = 100 * colMeans(is.na(meta))) %>%  # colMeans van TRUE/FALSE = fractie TRUE
+  filter(pct_NA > 0) %>%                                   # enkel variabelen met minstens 1 missing
+  arrange(desc(pct_NA))                                    # sorteer van veel naar weinig missing
+na_meta
+
+ggplot(na_meta, aes(reorder(variabele, pct_NA), pct_NA)) + # reorder: staven gesorteerd op % missing
+  geom_col(fill = "tomato") +                              # staafdiagram
+  coord_flip() +                                           # liggende staven (namen leesbaar)
+  geom_hline(yintercept = drempel$max_na_clin, linetype = 2) +  # stippellijn op 30%
+  labs(x = NULL, y = "% missing")
+```
+
+**Waarom ontbreken ze?** We tellen per reeks en dag hoeveel samples een waarde hebben voor een paar vaak-ontbrekende labo's:
+
+```{r na-why}
+meta %>%
+  group_by(series, day) %>%                           # per combinatie reeks x dag:
+  summarise(n = n(),                                  #   aantal samples
+            cmv_serologie = sum(!is.na(cmv.igg_serology)),   # aantal met een CMV-serologiewaarde
+            RF_antiCCP    = sum(!is.na(infl.rf_igm_result)), # aantal met reumafactor
+            eGFR          = sum(!is.na(chem.egfr_non_aa)),   # aantal met eGFR
+            BMI           = sum(!is.na(am.bmi)),             # aantal met BMI
+            totaal_eiwit  = sum(!is.na(chem.protein)),       # aantal met totaal eiwit (ter vergelijking)
+            .groups = "drop")
+```
+
+**Interpretatie (vul aan met wat jullie zien):** labo's zoals CMV-serologie, reumafactor en anti-CCP werden maar één keer per persoon gemeten (*missing by design*, MAR). De meeste routinelabo's missen maar in ±10 samples. Die gevallen behandelen we in de modellen als complete-case.
+
+## Stap 5 – Verdeling en transformatie (guiding question 4)
+
+**Waarom?** Veel statistische methoden werken het best met ongeveer symmetrische (normale) verdelingen. Biologische concentraties zijn vaak rechtsscheef, en dan helpt een log-transformatie. Maar NPX is al een **log2-schaal** en is door Olink al genormaliseerd (Methods, "Olink analysis": extensiecontrole → plaatcontroles → *intensity normalization*). Een extra log-transformatie is dus niet nodig. Dat controleren we:
+
+```{r distribution}
+summary(as.vector(prot))          # alle waarden op één hoop: min, mediaan, max. Negatieve waarden = log-schaal
+skew <- apply(prot, 2, skewness)  # apply(matrix, 2, functie): functie per KOLOM (2) = per eiwit
+summary(skew)                     # scheefheid van alle eiwitten samengevat
+
+as_tibble(prot[, sample(colnames(prot), 9)]) %>%  # neem 9 willekeurige eiwitten
+  pivot_longer(everything()) %>%                  # zet om naar lang formaat (kolommen 'name' en 'value'),
+                                                  #   zodat ggplot ze in aparte panelen kan tekenen
+  ggplot(aes(value)) +
+  geom_density(fill = "grey70") +                 # dichtheidscurve (gladde versie van een histogram)
+  facet_wrap(~ name, scales = "free") +           # één paneel per eiwit, elk met eigen as
+  labs(x = "NPX (log2)")
+
+log_beslissing("Transformatie eiwitten", "Geen extra log-transformatie",
+               "NPX is al log2 (negatieve waarden, verdelingen ~symmetrisch)")
+```
+
+**Wat zie je?** Negatieve waarden (dat kan enkel op een log-schaal) en een mediane scheefheid dicht bij 0. De curves zijn ongeveer klokvormig.
+
+**Zijn alle samples vergelijkbaar?** Na goede normalisatie zou de mediane NPX van elk sample ongeveer even hoog moeten zijn. We kleuren per **batch** (de Olink-run waarin het staal gemeten werd).
+
+```{r boxplot-batch, fig.width = 10}
+sample_med <- apply(prot, 1, median, na.rm = TRUE)   # apply(..., 1, ...): per RIJ = per sample de mediaan
+
+tibble(sample = rownames(prot), mediaan = sample_med, batch = meta$batch) %>%
+  ggplot(aes(batch, mediaan, fill = batch)) +
+  geom_boxplot(show.legend = FALSE) +                # één boxplot per batch
+  labs(x = "Olink-batch", y = "Mediane NPX per sample")
+
+# Kruistabel: hoeveel samples per batch en per jaar van afname?
+meta %>% count(batch, draw_year) %>%
+  pivot_wider(names_from = draw_year, values_from = n, values_fill = 0)  # jaren naast elkaar als kolommen
+```
+
+**Wat zie je?** De boxen liggen op verschillende hoogtes. Er is dus een systematisch verschil tussen de batches (een **batch-effect**). De tabel toont dat de batches grotendeels samenvallen met het jaar van afname.
+
+**Belangrijk:** het bestand heet *npx_raw*. In de paper werd gemodelleerd op **"NPX(bridged)"**, dus na correctie tussen batches met *bridging controls* (dezelfde stalen die in elke batch opnieuw gemeten worden). Die controles hebben wij niet. Daarom moeten we het batch-effect zelf bekijken (stap 6).
+
+## Stap 6 – Batch-effect: clusteren de samples volgens biologie of techniek? (guiding question 5)
+
+### PCA op de ongecorrigeerde data
+
+**Wat is PCA ook alweer?** Met 1300+ eiwitten kan je samples niet in één figuur zetten. PCA (*principal component analysis*) maakt nieuwe assen (PC1, PC2, ...) die zoveel mogelijk van de variatie samenvatten. PC1 is de richting waarin de samples het meest verschillen, PC2 de volgende, enzovoort. Als samples op PC1/PC2 per batch groeperen, is batch de grootste bron van variatie.
+
+**Waarom enkel eiwitten zonder missings?** `prcomp()` werkt niet met NA. **Waarom `scale. = TRUE`?** Dan krijgt elk eiwit gemiddelde 0 en SD 1, zodat een eiwit met grote spreiding niet automatisch domineert.
+
+```{r pca-raw}
+volledig <- colnames(prot)[colSums(is.na(prot)) == 0]   # namen van eiwitten zonder enige missing
+length(volledig)                                       # hoeveel zijn dat?
+
+pca_raw <- prcomp(prot[, volledig], center = TRUE, scale. = TRUE)  # de PCA zelf
+# pca_raw$x     = de coördinaten van elk sample op PC1, PC2, ...
+# pca_raw$sdev  = standaardafwijking per PC; sdev^2 = variantie
+ve_raw  <- 100 * pca_raw$sdev^2 / sum(pca_raw$sdev^2)  # % verklaarde variantie per PC
+
+# Zelfgemaakte functie om snel een PCA-plot te maken, gekleurd volgens een gekozen variabele
+pca_plot <- function(pca, ve, kleur, titel) {
+  as_tibble(pca$x[, 1:2]) %>%                  # kolommen PC1 en PC2
+    bind_cols(meta) %>%                        # plak de metadata ernaast (zelfde volgorde!)
+    ggplot(aes(PC1, PC2, colour = .data[[kleur]])) +   # .data[[kleur]]: de kolom met de naam in 'kleur'
+    geom_point(size = 0.8, alpha = 0.7) +      # punten; alpha = doorzichtigheid
+    labs(x = sprintf("PC1 (%.1f%%)", ve[1]),   # sprintf: zet het % verklaarde variantie in de astitel
+         y = sprintf("PC2 (%.1f%%)", ve[2]),
+         title = titel, colour = kleur)
+}
+pca_plot(pca_raw, ve_raw, "batch", "Ongecorrigeerd – kleur = batch")
+pca_plot(pca_raw, ve_raw, "age_group", "Ongecorrigeerd – kleur = leeftijdsgroep")
+```
+
+**Wat zie je?** In de eerste figuur vormen de batches duidelijke, gescheiden wolken. In de tweede zijn jong en oud door elkaar gemengd. De techniek domineert dus over de biologie.
+
+### Welke factor verklaart elke hoofdcomponent?
+
+**Waarom?** Een figuur bekijken is subjectief. Om het te kwantificeren, fitten we voor elke PC en elke factor een lineair model `PC ~ factor` en noteren de **R²**: het aandeel van de variatie op die PC dat door die factor verklaard wordt (0 = niets, 1 = alles).
+
+```{r pc-r2-fun}
+pc_r2 <- function(pca, factoren = c("batch", "plate", "age_group", "sex", "cmv",
+                                    "series", "day", "draw_year", "donor"), n_pc = 8) {
+  expand_grid(PC = paste0("PC", 1:n_pc), factor = factoren) %>%  # alle combinaties PC x factor
+    mutate(R2 = map2_dbl(PC, factor,                              # voor elke combinatie:
+             ~ summary(lm(pca$x[, .x] ~ meta[[.y]]))$r.squared),  #   fit lm(PC ~ factor), haal R² op
+           PC = factor(PC, levels = paste0("PC", 1:n_pc)))        # PC1, PC2, ... in de juiste volgorde
+}
+plot_r2 <- function(r2, titel) {
+  ggplot(r2, aes(PC, factor, fill = R2)) +
+    geom_tile(colour = "white") +                         # tegels: kleur = grootte van R²
+    geom_text(aes(label = sprintf("%.2f", R2)), size = 3) +   # het getal op elke tegel
+    scale_fill_gradient(low = "white", high = "firebrick", limits = c(0, 1)) +
+    labs(x = NULL, y = NULL, title = titel)
+}
+plot_r2(pc_r2(pca_raw), "Ongecorrigeerd: R² per factor")
+```
+
+**Wat zie je?** De eerste twee PC's worden voor het grootste deel verklaard door **batch** (en de platen binnen die batches). Dat is een technisch effect, groter dan om het even welke biologische factor. Zonder correctie zou elke analyse vooral batchverschillen oppikken. `donor` verklaart ook veel: samples van dezelfde persoon lijken op elkaar (herhaalde metingen).
+
+### Is batch verstrengeld met de biologie?
+
+**Waarom?** Stel dat alle ouderen in batch A en alle jongeren in batch B zaten. Dan kan je het leeftijdseffect onmogelijk van het batch-effect scheiden (*confounding*), en zou je met de batch ook het leeftijdseffect wegcorrigeren. Dat controleren we:
+
+```{r confounding}
+table(meta$batch, meta$age_group)                 # aantal samples per batch en leeftijdsgroep
+table(meta$batch, meta$series)                    # per batch en reeks
+chisq.test(table(meta$batch, meta$age_group))     # chi²-test: is de verdeling jong/oud gelijk over de batches?
+```
+
+**Wat zie je?** Elke batch bevat zowel jongeren als ouderen, maar niet in dezelfde verhouding (batch 20201752 bevat vooral jongeren), en de batches volgen grotendeels de tijd (jaar 1 vs jaar 2). Daarom corrigeren we **met behoud van de biologische factoren**.
+
+### Batchcorrectie
+
+**Hoe werkt het?** `limma::removeBatchEffect()` schat per eiwit hoeveel hoger of lager elke batch gemiddeld ligt, en trekt dat verschil af. Via `design` geef je mee welke biologische effecten (leeftijdsgroep, geslacht, CMV) het model moet kennen. Zo wordt een verschil dat door leeftijd komt, niet aan de batch toegeschreven en ook niet weggecorrigeerd.
+
+```{r batch-correct}
+# model.matrix maakt de "design matrix": een kolom per biologische factor (0/1-codering)
+design_bio <- model.matrix(~ age_group + sex + cmv, data = meta)
+
+# removeBatchEffect verwacht eiwitten in de RIJEN en samples in de kolommen.
+# Daarom eerst t() (transponeren = rijen en kolommen omwisselen) en achteraf terug t().
+prot_bc <- t(removeBatchEffect(t(prot), batch = meta$batch, design = design_bio))
+# prot_bc = batch-gecorrigeerde versie van prot (bc = "batch corrected")
+
+log_beslissing("Batchcorrectie",
+               "limma::removeBatchEffect() op Olink-batch, met behoud van leeftijdsgroep, geslacht en CMV",
+               "Batch verklaart het grootste deel van PC1/PC2; geen bridging controls beschikbaar")
+```
+
+(Een waarschuwing "Partial NA coefficients" mag je negeren: die komt van de eiwitten die in één batch volledig ontbreken.)
+
+**Controle: is het batch-effect weg?** Dezelfde PCA en R²-figuur, nu op de gecorrigeerde data:
+
+```{r pca-bc}
+pca_bc <- prcomp(prot_bc[, volledig], center = TRUE, scale. = TRUE)  # PCA op gecorrigeerde data
+ve_bc  <- 100 * pca_bc$sdev^2 / sum(pca_bc$sdev^2)
+pca_plot(pca_bc, ve_bc, "batch", "Na batchcorrectie – kleur = batch")
+pca_plot(pca_bc, ve_bc, "age_group", "Na batchcorrectie – kleur = leeftijdsgroep")
+plot_r2(pc_r2(pca_bc), "Na batchcorrectie: R² per factor")
+
+# En opnieuw de mediaan per sample per batch: liggen de boxen nu op gelijke hoogte?
+tibble(sample = rownames(prot_bc), mediaan = apply(prot_bc, 1, median, na.rm = TRUE),
+       batch = meta$batch) %>%
+  ggplot(aes(batch, mediaan, fill = batch)) + geom_boxplot(show.legend = FALSE) +
+  labs(x = "Olink-batch", y = "Mediane NPX per sample (gecorrigeerd)")
+```
+
+**Wat zie je?** De batches zijn door elkaar gemengd, en de R² van batch is ongeveer 0. Nu komen biologische factoren naar boven (leeftijdsgroep op PC2, geslacht op PC4). Dat is een sterke figuur voor het verslag: zet de R²-figuur vóór en na correctie naast elkaar.
+
+**Hoe gebruik je dit verder?**
+
+- **Visualisatie, clustering en machine learning (Part 4):** de gecorrigeerde matrix `prot_bc`.
+- **Statistische modellen (Part 2–3):** beter de **ongecorrigeerde** `prot` met **batch als covariaat** in het model (bv. `NPX ~ age_group + sex + cmv + batch`). Zo schat het model het batch-effect zelf en worden de vrijheidsgraden correct geteld.
+
+## Stap 7 – Outliers (guiding question 3)
+
+### Afwijkende samples zoeken
+
+**Waarom?** Een sample dat technisch mislukt is (bv. een bloedstaal dat te lang bleef liggen), kan resultaten vertekenen. Maar niet elk afwijkend sample is een fout: het kan ook echte biologie zijn. We zoeken eerst de afwijkers, en beslissen daarna.
+
+We gebruiken de gecorrigeerde data (anders zou elke batch als "afwijkend" uitkomen) en vier maten per sample:
+
+1. **mediane NPX**: ligt het hele profiel hoger of lager dan normaal?
+2. **IQR** (interkwartielafstand): is de spreiding over de eiwitten abnormaal groot of klein?
+3. **gemiddelde correlatie met alle andere samples**: een technisch slecht sample lijkt op niemand.
+4. **afstand tot het centrum in de PCA**: ligt het sample ver weg van de rest?
+
+Per maat berekenen we een robuuste z-score. Een sample is *outlier* als het op **minstens twee** maten een |z| > `r drempel$outlier_z` heeft. Twee maten eisen, zodat één toevallige uitschieter niet volstaat.
+
+```{r outliers}
+x <- prot_bc[, volledig]                    # gecorrigeerde data, enkel eiwitten zonder NA
+
+cor_mat <- cor(t(x))                        # correlatie tussen alle samples (t(): samples moeten kolommen zijn)
+                                            #   -> matrix 867x867: hoe goed lijkt sample i op sample j?
+diag(cor_mat) <- NA                         # correlatie van een sample met zichzelf (=1) niet meetellen
+
+qc <- tibble(sample   = rownames(x),
+             mediaan  = apply(x, 1, median),            # maat 1: mediaan per sample
+             iqr      = apply(x, 1, IQR),               # maat 2: spreiding per sample
+             mean_cor = rowMeans(cor_mat, na.rm = TRUE),# maat 3: gemiddelde correlatie met de anderen
+             pc_dist  = sqrt(robust_z(pca_bc$x[, 1])^2 +    # maat 4: afstand tot het centrum in PC1/PC2
+                             robust_z(pca_bc$x[, 2])^2)) %>%  #   (stelling van Pythagoras)
+  mutate(n_flags = (abs(robust_z(mediaan)) > drempel$outlier_z) +  # elke regel geeft TRUE (=1) of FALSE (=0)
+                   (abs(robust_z(iqr))     > drempel$outlier_z) +
+                   (robust_z(mean_cor)     < -drempel$outlier_z) + # enkel LAGE correlatie is verdacht
+                   (pc_dist                > drempel$outlier_z),
+         # n_flags = op hoeveel van de 4 maten het sample afwijkt (0 tot 4)
+         outlier = n_flags >= 2) %>%                               # outlier als >= 2 vlaggen
+  bind_cols(meta %>% select(donor, batch, plate, visit, age_group, pct_below_lod))  # info erbij plakken
+
+table(qc$n_flags)                           # hoeveel samples hebben 0, 1, 2, ... vlaggen?
+qc %>% filter(n_flags > 0) %>%              # toon de samples met minstens 1 vlag
+  arrange(desc(n_flags)) %>%
+  select(sample, donor, visit, batch, n_flags, mediaan, iqr, mean_cor, pc_dist)
+```
+
+```{r outlier-plots}
+# Figuur 1: mediaan vs. spreiding per sample; kleur = aantal vlaggen
+ggplot(qc, aes(mediaan, iqr, colour = factor(n_flags))) + geom_point(size = 1) +
+  labs(colour = "# vlaggen", title = "Niveau en spreiding per sample")
+# Figuur 2: samples gesorteerd op hun gemiddelde correlatie. Outliers zitten links onderaan.
+ggplot(qc, aes(rank(mean_cor), mean_cor, colour = factor(n_flags))) + geom_point(size = 1) +
+  labs(x = "Rang", y = "Gem. correlatie met andere samples", colour = "# vlaggen")
+```
+
+### Technisch of biologisch?
+
+**Het idee:** iedere donor heeft ongeveer 10 samples. Een persoon met een "speciaal" eiwitprofiel (biologie, bv. een genetische variant) is in **al** zijn samples speciaal. Een technisch mislukt staal is maar **één keer** afwijkend, en lijkt dan ook niet meer goed op de andere samples van dezelfde persoon.
+
+```{r within-donor}
+# outer(a, a, "==") maakt een matrix: TRUE op [i, j] als sample i en j van dezelfde donor zijn
+same <- outer(meta$donor, meta$donor, "==")
+diag(same) <- FALSE                          # een sample telt niet als "andere sample van dezelfde donor"
+
+# Voor elk sample i: gemiddelde correlatie met de andere samples van dezelfde donor...
+qc$cor_eigen  <- sapply(seq_len(nrow(x)), function(i)
+  if (any(same[i, ])) mean(cor_mat[i, same[i, ]]) else NA)  # (NA als de donor maar 1 sample heeft)
+# ...en met alle samples van andere donoren
+qc$cor_andere <- sapply(seq_len(nrow(x)), function(i) mean(cor_mat[i, !same[i, ]], na.rm = TRUE))
+
+# Figuur: lijken samples meer op die van dezelfde persoon dan op die van anderen?
+qc %>% select(cor_eigen, cor_andere) %>%
+  pivot_longer(everything()) %>%
+  ggplot(aes(name, value)) + geom_boxplot() +
+  scale_x_discrete(labels = c("andere donoren", "zelfde donor")) +
+  labs(x = NULL, y = "Gemiddelde Pearson-correlatie")
+
+# Tabel voor de geflagde samples: welk deel van de samples van die donor is ook geflagd?
+qc %>% group_by(donor) %>%
+  mutate(frac_donor_flagged = mean(n_flags > 0)) %>%   # fractie geflagde samples binnen die donor
+  ungroup() %>%
+  filter(n_flags > 0) %>%
+  select(sample, donor, visit, n_flags, cor_eigen, cor_andere, frac_donor_flagged)
+```
+
+**Wat zie je?** Gewoonlijk correleren samples sterker met de samples van dezelfde persoon (± 0,79) dan met die van anderen. De geflagde samples hebben een lagere correlatie met hun eigen donor, en meestal is maar één sample van die donor geflagd.
+
+**Welke eiwitten zijn verhoogd in de outliers?** Dat geeft een hint over de oorzaak.
+
+```{r outlier-proteins}
+o  <- qc$sample[qc$outlier]                 # namen van de outlier-samples
+zz <- scale(prot_bc[, volledig])            # z-score per eiwit (0 = gemiddeld, 2 = 2 SD hoger dan gemiddeld)
+# gemiddelde z-score per eiwit binnen de outliers, gesorteerd van hoog naar laag, top 20:
+round(sort(colMeans(zz[rownames(zz) %in% o, , drop = FALSE]), decreasing = TRUE)[1:20], 2)
+```
+
+**Interpretatie:**
+
+- Zijn het vooral **intracellulaire** eiwitten (bv. CASP8, DFFA, PEBP1, TXNRD1, TRIAP1)? Die horen normaal in cellen en niet in plasma. Dat wijst op cellyse of een vertraagde verwerking van het bloedstaal: een **pre-analytisch, technisch** probleem.
+- Alle samples van een donor wijken af → eigenschap van die **persoon** (biologie, bv. een genetische eiwitvariant) → **behouden**.
+- Eén sample wijkt af en lijkt niet meer op de eigen andere samples → waarschijnlijk **technisch** (staal, pipettering, plaat) → **verwijderen**.
+- Kijk ook naar het bezoek: een afwijking op dag 7 kan een echte vaccinatierespons of een infectie zijn (vergelijk met `infl.hs_crp` van dat sample).
+
+**Beslissing in code:** verwijder outliers als hoogstens de helft van de samples van die donor afwijkt (anders is het donor-eigen = biologie).
+
+```{r outlier-remove}
+weg_out <- qc %>%
+  group_by(donor) %>%
+  mutate(frac = mean(outlier)) %>%      # fractie outliers binnen de donor
+  ungroup() %>%
+  filter(outlier, frac <= 0.5) %>%      # outlier EN niet donor-eigen
+  pull(sample)                          # pull: haal de kolom 'sample' eruit als vector
+weg_out                                 # toon de namen
+
+log_beslissing("Outliers", paste(length(weg_out), "sample(s) als technische outlier verwijderd"),
+               paste0(">=2 QC-maten met |robuuste z| > ", drempel$outlier_z, " en niet donor-eigen"))
+
+# Verwijder ze uit ALLE objecten, zodat alles in dezelfde volgorde blijft
+houd    <- !rownames(prot) %in% weg_out    # TRUE voor de samples die we houden
+prot    <- prot[houd, ]
+prot_bc <- prot_bc[houd, ]
+meta    <- meta[houd, ]
+```
+
+## Stap 8 – Klinische labowaarden
+
+**Waarom?** Naast eiwitten zijn er ±70 klinische labowaarden (bloedbeeld, lever, nier, lipiden, CRP, ...). Die kan je in Part 2–4 gebruiken als uitkomst of covariaat. Ze verdienen dezelfde controle: missings en verdeling.
+
+De klinische labo's zijn de kolommen met prefix `am.` (antropometrie), `chem.` (biochemie), `bc.` (bloedbeeld), `infl.` (inflammatie), `lip.` (lipiden) en `cmv.`.
+
+```{r clin-select}
+clin_cols <- meta %>%
+  select(starts_with(c("am.", "chem.", "bc.", "infl.", "lip.", "cmv."))) %>%  # kolommen met die prefixen
+  select(where(is.numeric)) %>%    # enkel de numerieke (geen tekstkolommen zoals "Positive/Negative")
+  colnames()                       # we willen enkel de namen
+length(clin_cols)                  # hoeveel labovariabelen?
+
+na_clin  <- 100 * colMeans(is.na(meta[, clin_cols]))   # % missing per labovariabele
+weg_clin <- names(na_clin)[na_clin > drempel$max_na_clin]  # namen van de variabelen boven 30%
+weg_clin                                               # welke zijn dat?
+clin_cols <- setdiff(clin_cols, weg_clin)              # setdiff: alles uit clin_cols BEHALVE weg_clin
+
+log_beslissing("Klinische labo's", paste(length(weg_clin), "labovariabelen met >",
+                                         drempel$max_na_clin, "% missing verwijderd"),
+               "Slechts in een subset van bezoeken gemeten (missing by design)")
+```
+
+**Scheve variabelen log2-transformeren.** Waarden zoals hs-CRP of triglyceriden zijn bij de meeste mensen laag en bij enkelen heel hoog (rechtsscheef). Een log-transformatie maakt de verdeling symmetrischer, zodat enkele extreme waarden een lineair model niet domineren. Log kan enkel bij strikt positieve waarden (log van 0 of negatief bestaat niet).
+
+```{r clin-log, fig.height = 6}
+sk     <- map_dbl(meta[, clin_cols], skewness)                 # scheefheid van elke labovariabele
+pos    <- map_lgl(meta[, clin_cols], ~ all(.x > 0, na.rm = TRUE)) # TRUE als alle waarden > 0
+to_log <- names(sk)[sk > drempel$skew_for_log & pos]           # scheef EN positief -> transformeren
+round(sk[to_log], 1)                                           # welke, en hoe scheef?
+
+# Figuur van de eerste 4: links voor, rechts na de transformatie
+meta %>% select(all_of(head(to_log, 4))) %>%
+  mutate(across(everything(), list(log2 = log2))) %>%   # maak van elke kolom ook een log2-versie
+  pivot_longer(everything()) %>%
+  ggplot(aes(value)) + geom_histogram(bins = 30, fill = "grey60") +
+  facet_wrap(~ name, scales = "free", ncol = 4) + labs(title = "Voor en na log2")
+
+# Nu echt transformeren: across(all_of(to_log), log2) = pas log2 toe op al die kolommen
+meta <- meta %>% mutate(across(all_of(to_log), log2))
+log_beslissing("Klinische labo's", paste("log2 op", length(to_log), "scheve variabelen:",
+                                         paste(to_log, collapse = ", ")),
+               paste("Scheefheid >", drempel$skew_for_log))
+```
+
+**Extreme labowaarden.** Niet zomaar verwijderen: een CRP van 50 mg/L kan echt zijn (infectie). Verwijder enkel waarden die fysiologisch onmogelijk zijn. Deze code toont waarden die meer dan 5 SD van het gemiddelde liggen, zodat je ze kan nakijken.
+
+```{r clin-extremes}
+z <- scale(meta[, clin_cols])                 # z-score per labovariabele
+idx <- which(abs(z) > 5, arr.ind = TRUE)      # posities (rij, kolom) waar |z| > 5
+tibble(sample    = meta$sample[idx[, 1]],     # welk sample (rij)
+       visit     = meta$visit[idx[, 1]],      # welk bezoek
+       variabele = clin_cols[idx[, 2]],       # welke variabele (kolom)
+       z         = round(z[idx], 1)) %>%      # hoe extreem
+  arrange(desc(abs(z)))
+```
+
+## Stap 9 – Heatmap
+
+**Waarom?** Een heatmap toont veel eiwitten en samples tegelijk, als kleuren. De samples worden geclusterd (gelijkaardige profielen naast elkaar). Met de gekleurde balken bovenaan zie je of die clusters samenvallen met leeftijd, geslacht, CMV, dag of batch (guiding question 5).
+
+We nemen de 50 eiwitten die het meest variëren tussen samples (de meest informatieve) en zetten ze om naar z-scores, zodat elk eiwit dezelfde kleurenschaal gebruikt.
+
+```{r heatmap, fig.width = 10, fig.height = 8}
+top50 <- names(sort(apply(prot_bc[, volledig], 2, var),   # variantie per eiwit,
+                    decreasing = TRUE))[1:50]             #   gesorteerd hoog -> laag, de eerste 50
+mat   <- t(scale(prot_bc[, top50]))                       # z-score per eiwit; t(): eiwitten in de rijen
+
+ha <- HeatmapAnnotation(                                  # de gekleurde balken bovenaan
+  leeftijd = meta$age_group, geslacht = meta$sex, CMV = meta$cmv,
+  dag = meta$day, batch = meta$batch,
+  col = list(leeftijd = c("Young Adult" = "gold", "Older Adult" = "purple"),   # zelf gekozen kleuren
+             geslacht = c(Female = "pink", Male = "lightblue"),
+             CMV = c(Negative = "grey80", Positive = "black")))
+
+Heatmap(mat, name = "z-score",
+        col = colorRamp2(c(-3, 0, 3), c("blue", "white", "red")),  # laag = blauw, gemiddeld = wit, hoog = rood
+        top_annotation = ha,
+        show_column_names = FALSE,                 # 858 samplenamen zijn onleesbaar -> niet tonen
+        row_names_gp = gpar(fontsize = 6),         # kleine letters voor de eiwitnamen
+        clustering_distance_columns = "pearson",   # samples clusteren op basis van correlatie
+        column_title = "Top 50 meest variabele eiwitten (batch-gecorrigeerd)")
+```
+
+**Wat zoek je?** Clusteren de samples volgens **donor** of **geslacht**, of nog altijd volgens **batch**? Benoem bv. eiwitclusters die duidelijk met geslacht samengaan; dat is meteen een goede controle dat de biologie bewaard bleef.
+
+## Stap 10 – Geschiktheid voor Part 2–4 en opslaan (guiding question 6)
+
+### Baseline-subset
+
+**Waarom?** Voor vragen zonder tijdsaspect (bv. "verschilt eiwit X tussen jong en oud, gecorrigeerd voor geslacht en CMV?") neem je best **één sample per persoon**: het eerste dag-0-sample vóór vaccinatie. De samples zijn dan onafhankelijk en een gewoon lineair model is geoorloofd. Voor vragen over vaccinatie (dag 0 → 7 → 90) gebruik je alle samples met een **mixed model** (`lme4::lmer(NPX ~ day * age_group + sex + cmv + batch + (1 | donor))`), net zoals de auteurs met lme4 deden.
+
+```{r baseline}
+baseline <- meta %>%
+  filter(day == "Day 0") %>%   # enkel dag-0-samples (vóór vaccinatie)
+  arrange(donor, days) %>%     # per donor gesorteerd op tijd
+  group_by(donor) %>%
+  slice(1) %>%                 # per donor het eerste (vroegste) dag-0-sample
+  ungroup()
+nrow(baseline)                          # hoeveel donoren?
+table(baseline$age_group, baseline$sex) # verdeling
+table(baseline$series)                  # uit welke reeks komen ze?
+```
+
+### Overzicht van de beslissingen
+
+```{r decisions}
+knitr::kable(beslissingen)   # het logboek dat we doorheen het script hebben aangevuld
+tibble(wat = c("Samples", "Donoren", "Eiwitten", "Klinische labo's", "Baseline-samples"),
+       aantal = c(nrow(prot), n_distinct(meta$donor), ncol(prot), length(clin_cols), nrow(baseline)))
+```
+
+**Wat doe je ermee?** Deze tabel is de basis voor de Methods-sectie "Data preprocessing" van het verslag.
+
+### Opslaan
+
+**Waarom?** Zo hoeft Part 2 niet alles opnieuw te berekenen: het leest gewoon dit ene bestand in. Een `.rds`-bestand bewaart R-objecten exact zoals ze zijn (matrices, factoren, ...).
+
+```{r save}
+dir.create("output", showWarnings = FALSE)     # maak een map 'output' (geen fout als die al bestaat)
+saveRDS(list(prot         = prot,       # NPX, gefilterd, NIET batch-gecorrigeerd -> modellen (+ batch als covariaat)
+             prot_bc      = prot_bc,    # NPX, batch-gecorrigeerd -> visualisatie, clustering, ML
+             meta         = meta,       # metadata + voorbewerkte klinische labo's
+             clin_cols    = clin_cols,  # namen van de klinische labovariabelen
+             baseline_ids = baseline$sample,  # ID's van de baseline-samples (1 per donor)
+             annot        = annot,      # eiwitannotatie
+             beslissingen = beslissingen),
+        "output/olink_age_preprocessed.rds")
+write_csv(beslissingen, "output/preprocessing_beslissingen.csv")   # logboek ook als csv (voor Excel/Word)
+# In Part 2 lees je alles terug in met: d <- readRDS("output/olink_age_preprocessed.rds")
+```
+
+
+
+# Fase C – Van data naar een eigen hypothese (in R)
+
+Een goede hypothese ontstaat in vijf stappen: verzamel de bouwstenen, zoek ideeën, maak het anders dan het artikel, toets aan de criteria, en controleer of ze testbaar is. In deze fase doen we dat met echte code. We gebruiken daarbij een **ontdek/bevestig-splitsing** om circulair redeneren te vermijden.
+
+## C1. De bouwstenen
+
+Elke hypothese is een combinatie van één uitkomst, minstens twee verklarende variabelen en een design (welke samples):
+
+| Bouwsteen | Mogelijkheden in dataset 1 | Type |
+|---|---|---|
+| Uitkomst | NPX van één eiwit; verandering ΔNPX (dag 7 − dag 0, of dag 90 − dag 0); een klinische labowaarde | continu |
+| Uitkomst (alternatief) | CMV-status, geslacht, "responder ja/nee" | binair |
+| Verklarend | leeftijdsgroep, geslacht, CMV, vaccinatie (ja/nee), dag, jaar, BMI, labowaarden, een ander eiwit | binair, categorisch, continu |
+| Correctievariabelen | batch, geslacht, CMV, BMI | categorisch, continu |
+| Design | baseline (1 sample per donor); paren dag 0–dag 7 (1 verschil per donor); alle tijdspunten (mixed model); vaccinatie vs geen vaccinatie | – |
+
+## C2. Ideeën uit vier bronnen
+
+1. **Biologie en literatuur:** na vaccinatie verandert het immuunsysteem tijdelijk (aangeboren respons, plasmablasten rond dag 7); ouderen reageren vaak zwakker op vaccins.
+2. **Eigen exploratie (Part 1):** leeftijd verklaart een deel van PC2, geslacht van PC4; de heatmap toont eiwitclusters.
+3. **De vergelijkingen die het design geeft:** dezelfde personen vóór en na vaccinatie, plus een groep zonder vaccinatie als controle.
+4. **De koppeling met de kliniek:** elk sample heeft ook bloedbeeld en ontstekingsmerkers.
+
+## C3. Anders dan het artikel
+
+Het artikel vergeleek eiwit**niveaus** tussen jong en oud op baseline. Wij veranderen één bouwsteen: de uitkomst wordt de **verandering na vaccinatie** (Δ dag 7 − dag 0). De vraag wordt dan: *welke eiwitten reageren op de vaccinatie, en is die reactie anders bij ouderen?* Dat deed het artikel niet met de plasma-eiwitten.
+
+Maar welk eiwit? Als we gewoon het eiwit kiezen dat het meest verandert, en dat daarna met dezelfde data testen, redeneren we circulair (handboek 1.3). Daarom splitsen we de data.
+
+## C4. Hulpfuncties voor de zoektocht
+
+**Waarom?** We gaan dezelfde bewerkingen een paar keer doen (voor verschillende reeksen en deelgroepen). Een functie schrijf je één keer en gebruik je daarna telkens opnieuw.
+
+```{r c-helpers}
+d    <- readRDS("output/olink_age_preprocessed.rds")   # de voorbewerkte data uit Part 1
+prot <- d$prot                                          # NPX, gefilterd, niet batch-gecorrigeerd
+meta <- d$meta                                          # metadata
+
+# maak_paren(): per donor één rij met het dag-0- en het dag-7-sample van een reeks
+maak_paren <- function(reeks) {
+  meta %>%
+    filter(series == reeks, day %in% c("Day 0", "Day 7")) %>%          # enkel die reeks, dag 0 en 7
+    select(donor, day, sample, batch, age_group, sex, cmv) %>%
+    pivot_wider(id_cols = c(donor, age_group, sex, cmv),                 # 1 rij per donor
+                names_from = day, values_from = c(sample, batch)) %>%
+    rename(s0 = `sample_Day 0`, s7 = `sample_Day 7`,                    # kortere namen
+           b0 = `batch_Day 0`,  b7 = `batch_Day 7`) %>%
+    filter(!is.na(s0), !is.na(s7))                                       # enkel donoren met beide samples
+}
+
+# delta_matrix(): per donor en per eiwit de verandering dag 7 - dag 0 (log2-fold change)
+delta_matrix <- function(paren) {
+  prot[paren$s7, , drop = FALSE] - prot[paren$s0, , drop = FALSE]
+}
+
+# screen_respons(): test voor ELK eiwit of de gemiddelde verandering verschilt van 0.
+# Dat is een gepaarde test (want de deltas zijn verschillen binnen dezelfde persoon),
+# uitgevoerd met limma (les 3), dat stabielere resultaten geeft bij veel eiwitten tegelijk.
+screen_respons <- function(D) {
+  D   <- D[, colSums(is.na(D)) == 0]                       # enkel eiwitten zonder ontbrekende deltas
+  fit <- eBayes(lmFit(t(D), matrix(1, nrow(D), 1)))        # model met enkel een intercept = gemiddelde delta
+  res <- topTable(fit, coef = 1, number = Inf, sort.by = "none")
+  tibble(eiwit = rownames(res),
+         logFC = res$logFC,                                # gemiddelde verandering (log2)
+         p     = res$P.Value,
+         fdr   = p.adjust(res$P.Value, method = "BH"))     # correctie voor multiple testing (Benjamini-Hochberg)
+}
+```
+
+## C5. Eerste poging: ontdekken op jaar 2, bevestigen op jaar 1?
+
+Het idee lijkt logisch: kies de eiwitten in griepjaar 2, test ze in griepjaar 1. We proberen het.
+
+```{r c-y2-screen}
+paren_y1 <- maak_paren("Flu Y1")
+paren_y2 <- maak_paren("Flu Y2")
+nrow(paren_y1); nrow(paren_y2)                          # aantal donoren met beide samples
+
+scr_y2 <- screen_respons(delta_matrix(paren_y2))
+scr_y1 <- screen_respons(delta_matrix(paren_y1))
+c(jaar2 = sum(scr_y2$fdr < 0.05), jaar1 = sum(scr_y1$fdr < 0.05))   # aantal "significante" eiwitten
+scr_y2 %>% arrange(p) %>% head(10)                      # de top 10 in jaar 2
+```
+
+**Wat zie je?** In jaar 2 "veranderen" honderden eiwitten, in jaar 1 maar een handvol. De top van jaar 2 bestaat vooral uit intracellulaire eiwitten en eiwitten uit rode bloedcellen (bv. CA1, CA2, SOD1, HBQ1) die *dalen*. Dat is verdacht: zo'n massale verandering is geen vaccinrespons. Bekijk in welke batch de samples zitten:
+
+```{r c-batch-day}
+meta %>%
+  filter(series %in% c("Flu Y1", "Flu Y2", "No vax"), day %in% c("Day 0", "Day 7")) %>%
+  count(series, day, batch) %>%                                   # aantal samples per reeks, dag en batch
+  pivot_wider(names_from = batch, values_from = n, values_fill = 0)
+```
+
+**Interpretatie (les 1: confounding).** In jaar 2 zitten de dag-0-samples vooral in batch Q-02017 en de dag-7-samples vooral in batch Q-04064. Het verschil "dag 7 vs dag 0" is in jaar 2 dus grotendeels een verschil tussen twee batches: **dag is verstrengeld met batch**. In jaar 1 en in de reeks zonder vaccinatie zitten dag 0 en dag 7 wel netjes samen in dezelfde batches. Jaar 2 is dus niet geschikt om vaccinatie-effecten te ontdekken. Dit is een sterk voorbeeld voor de Discussion: het design bepaalt welke vragen je kan beantwoorden.
+
+## C6. Beter: de donoren van jaar 1 in twee helften splitsen
+
+We verdelen de donoren van jaar 1 willekeurig in een **ontdekkingshelft** en een **bevestigingshelft**. De splitsing gebeurt per leeftijdsgroep, zodat beide helften evenveel jongeren en ouderen hebben. In de ontdekkingshelft zoeken we eiwitten die na vaccinatie veranderen. In de bevestigingshelft kijken we of ze daar ook veranderen. Als derde controle kijken we of ze ook veranderen **zonder vaccinatie** (negatieve controle).
+
+```{r c-split}
+set.seed(2026)                                          # zelfde willekeurige verdeling bij elke run
+paren_y1 <- paren_y1 %>%
+  group_by(age_group) %>%                               # per leeftijdsgroep...
+  mutate(set = sample(rep(c("ontdek", "bevestig"), length.out = n()))) %>%  # ...de helft in elke set
+  ungroup()
+table(paren_y1$set, paren_y1$age_group)
+
+scr_ontdek   <- screen_respons(delta_matrix(filter(paren_y1, set == "ontdek")))
+scr_bevestig <- screen_respons(delta_matrix(filter(paren_y1, set == "bevestig")))
+scr_novax    <- screen_respons(delta_matrix(maak_paren("No vax")))   # zelfde bezoeken, zonder vaccin
+
+kandidaten <- scr_ontdek %>%
+  filter(fdr < 0.05) %>%                                # significant in de ontdekkingshelft
+  left_join(scr_bevestig %>% select(eiwit, logFC_bev = logFC, p_bev = p), by = "eiwit") %>%
+  left_join(scr_novax    %>% select(eiwit, logFC_novax = logFC, p_novax = p), by = "eiwit") %>%
+  mutate(bevestigd = sign(logFC_bev) == sign(logFC) & p_bev < 0.05) %>%  # zelfde richting en p < 0,05
+  arrange(p)
+kandidaten
+```
+
+**Is dat toeval van deze ene splitsing?** We herhalen de splitsing met andere seeds en tellen hoe vaak elk eiwit ontdekt én bevestigd wordt:
+
+```{r c-split-repeat}
+herhaal_split <- function(seed) {
+  set.seed(seed)
+  p1 <- maak_paren("Flu Y1") %>% group_by(age_group) %>%
+    mutate(set = sample(rep(c("ontdek", "bevestig"), length.out = n()))) %>% ungroup()
+  o <- screen_respons(delta_matrix(filter(p1, set == "ontdek")))
+  b <- screen_respons(delta_matrix(filter(p1, set == "bevestig")))
+  o %>% filter(fdr < 0.05) %>%
+    left_join(b %>% select(eiwit, logFC_b = logFC, p_b = p), by = "eiwit") %>%
+    filter(sign(logFC_b) == sign(logFC), p_b < 0.05) %>%
+    pull(eiwit)                                         # eiwitten die ontdekt EN bevestigd zijn
+}
+gevonden <- map(1:10, herhaal_split)                    # 10 verschillende splitsingen
+sort(table(unlist(gevonden)), decreasing = TRUE)        # hoe vaak komt elk eiwit terug (op 10)?
+```
+
+**Wat zie je?** **S100A12** wordt bij (bijna) elke splitsing ontdekt én bevestigd, met de grootste verandering (log2FC ± 0,65, dus ongeveer ×1,6). Zonder vaccinatie verandert het niet. Daarnaast duiken af en toe andere eiwitten op, met kleinere effecten: TNFRSF13B/TACI (een merker van plasmablasten, 4 van de 10 keer), MYOC, TNFRSF8 en FCRL2.
+
+**Wat is S100A12?** Een eiwit uit de S100-familie (ook "calgranuline C" of EN-RAGE genoemd), vooral gemaakt door neutrofielen en monocyten. Het werkt als *alarmine*: een signaalmolecule van de aangeboren immuniteit.
+
+## C7. Is de vraag testbaar? (vóór we ons vastleggen)
+
+We controleren de testbaarheid van "verschilt de stijging van S100A12 tussen jong en oud?", met dezelfde controles als in het strategiedocument (C5).
+
+```{r c-testbaar}
+eiwit <- "S100A12"
+d$annot %>% filter(protein == eiwit) %>%                # goed gemeten? (% onder LOD, % missing)
+  select(protein, panel, pct_below_lod, pct_missing)
+
+paren_y1 <- paren_y1 %>% mutate(delta = prot[s7, eiwit] - prot[s0, eiwit])
+table(paren_y1$age_group)                               # genoeg donoren per groep?
+table(paren_y1$age_group, paren_y1$cmv)                 # vergelijkbare groepen?
+t.test(paren_y1$delta)                                  # is er een respons? (gemiddelde delta != 0)
+sd(paren_y1$delta)                                      # spreiding van de respons
+
+n <- table(paren_y1$age_group)
+pwr::pwr.t2n.test(n1 = n[1], n2 = n[2], sig.level = 0.05, power = 0.8)  # detecteerbaar effect (Cohen's d)
+```
+
+**Wat zie je?** 0% onder de LOD, 47 jongeren en 45 ouderen, een sterke en significante stijging (± 0,65 log2-NPX). Met deze groepsgroottes is een verschil van ongeveer d = 0,6 detecteerbaar, wat bij deze spreiding ongeveer 0,5 log2-eenheden is.
+
+**Waarom is dit niet circulair?** We kozen S100A12 omdat het **in het algemeen** op de vaccinatie reageert, zonder naar leeftijd te kijken. De vraag die we testen gaat over het **verschil tussen leeftijdsgroepen** in die reactie. Dat is hetzelfde principe als het filter in Part 3: selecteren op een criterium dat onafhankelijk is van de groepen die je vergelijkt. Bovendien is de respons zelf bevestigd in een onafhankelijke helft van de donoren.
+
+## C8. Toets aan de criteria en leg vast
+
+- [x] **Multivariabel:** uitkomst Δ S100A12; verklarend: leeftijdsgroep + geslacht + CMV (correctie); inhoudelijk een interactie dag × leeftijd.
+- [x] **Eigen vraag:** het artikel keek niet naar de vaccinatierespons in het plasmaproteoom.
+- [x] **Onderbouwd:** data-gedreven via een ontdek/bevestig-splitsing, met een negatieve controle; biologisch plausibel (aangeboren respons, zwakkere vaccinrespons bij ouderen).
+- [x] **Precies:** H0 en H1 hieronder; de coëfficiënt `age_groupOlder Adult` beantwoordt de vraag.
+- [x] **Eén primaire analyse:** `lm(delta ~ age_group + sex + cmv)` op jaar 1 (één paar per donor). Al de rest is gevoeligheidsanalyse.
+- [x] **Juiste N:** donoren (92).
+- [x] **Bruikbaar voor Part 3:** hetzelfde model voor alle eiwitten (Δ ~ leeftijd + geslacht + CMV).
+
+> **Onderzoeksvraag:** Verschilt de stijging van plasma-S100A12 zeven dagen na griepvaccinatie tussen jongere en oudere volwassenen, onafhankelijk van geslacht en CMV-status?
+>
+> **H0:** de gemiddelde verandering (dag 7 − dag 0) is gelijk bij jongere en oudere volwassenen, na correctie voor geslacht en CMV.
+>
+> **H1:** de verandering verschilt; we verwachten een kleinere stijging bij ouderen.
+
+**Alternatief als jullie liever een vooraf, biologisch gekozen eiwit nemen:** TNFRSF13B (TACI), een merker van plasmablasten. Zet in fase D gewoon `eiwit <- "TNFRSF13B"`; alle code werkt dan ook.
+
+
+
+# Fase D – Part 2: de hypothese testen
+
+Het model volgt uit twee vragen: welk type is de uitkomst, en zijn de observaties onafhankelijk? Daarna werk je altijd in dezelfde volgorde: kijken, ruw testen, gecorrigeerd testen, assumpties nagaan, robuustheid nagaan, rapporteren.
+
+**Keuze van het model (les 3 en les 1):**
+
+| Vraag | Bij ons | Gevolg |
+|---|---|---|
+| Type uitkomst? | Δ NPX = continu | lineair model `lm()` (bij binair: `glm(..., family = binomial)`) |
+| Onafhankelijke observaties? | één Δ per donor (jaar 1) | gewoon `lm()`; bij meerdere samples per donor: `lmer(... + (1 \| donor))` |
+| Welke covariaten? | geslacht en CMV (mogelijke confounders) | `delta ~ age_group + sex + cmv` |
+| Waarom Δ? | elke persoon is zijn eigen controle; batch valt grotendeels weg | het verschil in Δ tussen jong en oud = de interactie dag × leeftijd |
+
+## D0. Packages voor Part 2
+
+```{r d-install, eval=FALSE}
+# Eenmalig installeren (selecteer de regel en druk Ctrl+Enter):
+install.packages(c("car", "lme4", "lmerTest", "pwr"))
+```
+
+```{r d-packages}
+library(car)        # vif(): controle op collineariteit (les 3, practicum)
+library(lmerTest)   # lmer(): mixed models, met p-waarden (laadt ook lme4 mee)
+library(pwr)        # poweranalyse (les 1)
+```
+
+## D1. De data voor de hoofdanalyse
+
+We nemen de paren van jaar 1 (uit fase C) en voegen per donor de waarden van het eiwit en van twee celtellingen toe. De celtellingen hebben we nodig voor een extra analyse in D5.
+
+```{r d-data}
+eiwit <- "S100A12"   # <- het eiwit van onze vraag. Wil je een ander eiwit? Verander enkel deze regel.
+
+# Hulpfunctie: haal een labowaarde op voor een lijst van sample-ID's
+lab <- function(variabele, ids) meta[[variabele]][match(ids, meta$sample)]
+
+paren <- maak_paren("Flu Y1") %>%                       # 1 rij per donor: dag-0- en dag-7-sample
+  mutate(npx_d0 = prot[s0, eiwit],                      # eiwitwaarde op dag 0
+         npx_d7 = prot[s7, eiwit],                      # eiwitwaarde op dag 7
+         delta  = npx_d7 - npx_d0,                      # de verandering = onze uitkomst (log2-fold change)
+         zelfde_batch = b0 == b7,                       # zitten beide samples in dezelfde batch?
+         # verandering in celtellingen (die zijn in Part 1 al log2-getransformeerd, dus ook log2-fold changes)
+         d_neutro = lab("bc.neutrophil_count", s7) - lab("bc.neutrophil_count", s0),
+         d_mono   = lab("bc.monocyte_count",   s7) - lab("bc.monocyte_count",   s0))
+
+nrow(paren)                 # N = aantal donoren
+table(paren$zelfde_batch)   # hoeveel paren zitten in dezelfde batch?
+head(paren)
+```
+
+**Waarom is Δ een "log2-fold change"?** NPX is log2. Een verschil van log2-waarden is de log2 van een verhouding: log2(a) − log2(b) = log2(a/b). Δ = 1 betekent een verdubbeling, Δ = 0,65 een factor 2^0,65 ≈ 1,57 (+57%).
+
+## D2. Visualiseren (vóór het testen)
+
+**Waarom eerst kijken?** Een figuur toont dingen die een p-waarde verbergt: hoe groot is het verschil, hoe groot is de spreiding, zijn er rare punten?
+
+**Figuur 1:** elke grijze lijn is één persoon, van dag 0 naar dag 7. De rode lijn is het gemiddelde van de groep.
+
+```{r d-plot-paired, fig.width = 8}
+paren %>%
+  select(donor, age_group, `Day 0` = npx_d0, `Day 7` = npx_d7) %>%   # de twee dagen als kolommen
+  pivot_longer(c(`Day 0`, `Day 7`), names_to = "day", values_to = "npx") %>%  # naar lang formaat
+  ggplot(aes(day, npx, group = donor)) +            # x = dag, y = eiwit, één lijn per donor
+  geom_line(alpha = 0.3) +                          # dunne doorzichtige lijnen per donor
+  stat_summary(aes(group = age_group), fun = mean,  # gemiddelde per dag...
+               geom = "line", linewidth = 1.3, colour = "red") +  # ...als dikke rode lijn
+  facet_wrap(~ age_group) +                         # apart paneel voor jong en oud
+  labs(x = NULL, y = paste(eiwit, "(NPX, log2)"),
+       title = paste(eiwit, "voor en 7 dagen na griepvaccinatie (jaar 1)"),
+       subtitle = "Grijs: individuele donoren; rood: groepsgemiddelde")
+```
+
+**Figuur 2:** de verandering Δ per leeftijdsgroep. Dat is precies wat we testen: een goede figuur voor het verslag.
+
+```{r d-plot-delta}
+ggplot(paren, aes(age_group, delta, fill = age_group)) +
+  geom_hline(yintercept = 0, linetype = 2) +                           # stippellijn = geen verandering
+  geom_boxplot(outlier.shape = NA, alpha = 0.5, show.legend = FALSE) + # boxplot
+  geom_jitter(width = 0.15, size = 1.5, show.legend = FALSE) +         # elk punt = 1 donor
+  labs(x = NULL, y = expression(Delta ~ "NPX (dag 7 - dag 0)"),
+       title = paste("Verandering in", eiwit, "na vaccinatie"))
+```
+
+## D3. Het model: ruw en gecorrigeerd
+
+**Ruw (bivariaat)** geeft de *crude* associatie; **gecorrigeerd (multivariabel)** de *adjusted* associatie (les 3). Verandert het leeftijdseffect sterk na correctie, dan was er confounding.
+
+```{r d-model}
+fit_crude <- lm(delta ~ age_group, data = paren)               # enkel leeftijdsgroep
+fit       <- lm(delta ~ age_group + sex + cmv, data = paren)   # hoofdanalyse: gecorrigeerd
+summary(fit)      # coëfficiënten, standaardfouten, p-waarden, R²
+confint(fit)      # 95%-betrouwbaarheidsintervallen
+
+rbind(crude    = coef(summary(fit_crude))["age_groupOlder Adult", ],   # ruw leeftijdseffect
+      adjusted = coef(summary(fit))["age_groupOlder Adult", ])         # gecorrigeerd leeftijdseffect
+```
+
+**Hoe lees je `summary(fit)`?**
+
+| Rij | Betekenis |
+|---|---|
+| `(Intercept)` | verwachte Δ bij de referentiegroep: jonge, vrouwelijke, CMV-negatieve donoren |
+| `age_groupOlder Adult` | **het antwoord op onze vraag**: hoeveel Δ bij ouderen verschilt van jongeren, bij gelijk geslacht en CMV |
+| `sexMale`, `cmvPositive` | effecten van de covariaten |
+| `Multiple R-squared` | deel van de variatie in Δ dat het model verklaart |
+
+Kolommen: `Estimate` = het effect, `Std. Error` = onzekerheid, `Pr(>|t|)` = p-waarde.
+
+**Wat zie je?** De intercept (0,78; p < 0,001) bevestigt dat S100A12 bij de referentiegroep stijgt. `age_groupOlder Adult` = −0,28 (95%-BI −0,66 tot 0,09; p = 0,14): bij ouderen stijgt S100A12 gemiddeld 0,28 log2-eenheden minder, maar het interval bevat 0. **We verwerpen H0 niet.** Het ruwe effect (−0,30) en het gecorrigeerde effect (−0,28) zijn bijna gelijk: geslacht en CMV vertekenen het leeftijdseffect niet.
+
+## D4. Assumpties controleren (zoals in het practicum)
+
+Een lineair model veronderstelt: lineariteit, normaal verdeelde residuen, gelijke variantie, geen extreem invloedrijke observaties, onafhankelijke observaties en geen sterke collineariteit.
+
+```{r d-assumptions, fig.width = 8, fig.height = 7}
+par(mfrow = c(2, 2))   # 4 figuren in een raster van 2x2
+plot(fit)              # de 4 standaard diagnostische figuren van een lm
+par(mfrow = c(1, 1))
+```
+
+1. **Residuals vs Fitted:** punten willekeurig rond 0, geen trechtervorm.
+2. **Normal Q-Q:** punten dicht bij de diagonaal (kleine afwijkingen in de staarten zijn oké bij n > 30).
+3. **Scale-Location:** rode lijn ongeveer horizontaal (gelijke variantie).
+4. **Residuals vs Leverage:** geen punten buiten Cook's distance 0,5.
+
+```{r d-assumptions-num}
+shapiro.test(residuals(fit))   # H0: residuen normaal verdeeld
+vif(fit)                       # collineariteit: VIF > 5 = probleem
+paren$donor[cooks.distance(fit) > 0.5]   # te invloedrijke donoren (character(0) = geen)
+wilcox.test(delta ~ age_group, data = paren)   # controle zonder normaliteitsassumptie (zonder correctie)
+```
+
+**Een uitschieter in de residuen.** De Q-Q-plot toont één donor ver onder de lijn. Practicumregel: rapporteer het model **met en zonder** zo'n punt. We zoeken donoren met een gestandaardiseerd residu groter dan 3 (meer dan 3 standaardafwijkingen van wat het model voorspelt):
+
+```{r d-outlier}
+std_res <- rstandard(fit)                                  # gestandaardiseerde residuen
+paren %>% mutate(std_res = std_res) %>%
+  filter(abs(std_res) > 3) %>%                             # de uitschieters
+  select(donor, age_group, sex, cmv, npx_d0, npx_d7, delta, std_res)
+
+fit_zonder <- lm(delta ~ age_group + sex + cmv, data = paren[abs(std_res) <= 3, ])  # model zonder hen
+coef(summary(fit_zonder))["age_groupOlder Adult", ]
+shapiro.test(residuals(fit_zonder))                        # normaliteit nu beter?
+```
+
+**Wat zie je?** Donor BR2016 (ouder, vrouw, CMV-positief) daalt met 3,5 log2-eenheden, tegen de algemene stijging in. Zonder deze donor is het leeftijdseffect −0,21 (p = 0,23) en zijn de residuen normaal (Shapiro p = 0,50). De conclusie verandert dus niet. Haal de donor niet uit de hoofdanalyse: de samples doorstonden de outliercontrole van Part 1, er is dus geen technische reden. Rapporteer beide resultaten.
+
+**Wat zie je?** Shapiro-Wilk p < 0,001: de residuen zijn niet normaal verdeeld. De Q-Q-plot toont dat dit vooral door één donor komt (zie hieronder). VIF ≈ 1: geen collineariteit. Geen donor met Cook's distance > 0,5. De Wilcoxon-test (p = 0,055) wijst in dezelfde richting.
+
+## D5. Extra multivariabele analyse: verklaren de cellen de stijging?
+
+**Waarom?** S100A12 komt vooral uit neutrofielen en monocyten. Stijgt S100A12 gewoon omdat er op dag 7 meer van die cellen in het bloed zijn? Dan zou de stijging verdwijnen na correctie voor de verandering in celaantallen. Dit gebruikt de klinische labo's, iets wat het artikel niet deed met de eiwitten.
+
+```{r d-cells}
+t.test(paren$d_neutro)   # veranderen de neutrofielen tussen dag 0 en dag 7?
+fit_cellen <- lm(delta ~ d_neutro + d_mono + age_group + sex + cmv, data = paren)
+summary(fit_cellen)$coefficients
+vif(fit_cellen)           # zijn de verklarende variabelen niet te sterk gecorreleerd?
+```
+
+**Hoe lees je dit?** De `(Intercept)` is nu de verwachte stijging bij een donor van de referentiegroep **zonder** verandering in neutrofielen en monocyten. De neutrofielen *dalen* licht op dag 7 (−0,10 log2; p = 0,005), dus meer cellen verklaren de stijging niet. Na correctie blijft de stijging even groot (intercept 0,81), de veranderingen in neutrofielen en monocyten hangen niet significant samen met Δ S100A12 (p = 0,40 en 0,88), en het leeftijdseffect blijft −0,29 (p = 0,16). Dat wijst eerder op activatie of vrijzetting dan op meer cellen: een hypothese, geen bewijs.
+
+## D6. Gevoeligheidsanalyses: zijn de conclusies robuust?
+
+### Enkel paren uit dezelfde batch
+
+```{r d-sens-batch}
+fit_batch <- lm(delta ~ age_group + sex + cmv, data = filter(paren, zelfde_batch))
+coef(summary(fit_batch))["age_groupOlder Adult", ]
+```
+
+**Wat zie je?** −0,36 (p = 0,07) bij de 84 paren uit dezelfde batch: dezelfde richting, iets groter.
+
+### Mixed model over jaar 1 en jaar 2
+
+**Waarom?** Meer data: dag 0 en dag 7 van beide jaren, dus tot 4 samples per persoon (pseudoreplicaten). Daarom een **random intercept per donor** `(1 | donor)` (oplossing 2 uit les 1). Batch zit erin als covariaat. **Let op (fase C5):** in jaar 2 is dag verstrengeld met batch; de batchterm vangt dat deels op, maar dit model is daarom enkel een gevoeligheidsanalyse.
+
+```{r d-mixed}
+flu12 <- meta %>%
+  filter(series %in% c("Flu Y1", "Flu Y2"), day %in% c("Day 0", "Day 7")) %>%
+  mutate(npx = prot[sample, eiwit], day = droplevels(day))
+fit_mm <- lmer(npx ~ day * age_group + sex + cmv + batch + (1 | donor), data = flu12)
+summary(fit_mm)$coefficients[c("dayDay 7", "age_groupOlder Adult", "dayDay 7:age_groupOlder Adult"), ]
+```
+
+- `dayDay 7` = stijging bij jongeren; `age_groupOlder Adult` = verschil oud vs jong op dag 0; `dayDay 7:age_groupOlder Adult` = **de interactie**: hoeveel de stijging bij ouderen extra verschilt. Die laatste beantwoordt onze vraag. Bij ons: stijging bij jongeren 0,70 (p < 0,001), interactie −0,14 (p = 0,31). Opvallend: op dag 0 liggen ouderen 0,37 hoger (p = 0,03), een baselineverschil dat in de Discussion kan.
+
+### Negatieve controle: met vs zonder vaccinatie
+
+```{r d-novax}
+novax <- meta %>%
+  filter(day %in% c("Day 0", "Day 7"), series %in% c("Flu Y1", "No vax")) %>%   # jaar 1 + reeks zonder vaccin
+  mutate(npx = prot[sample, eiwit], day = droplevels(day),
+         vax = factor(ifelse(series == "No vax", "No vax", "Flu"), levels = c("Flu", "No vax")))
+fit_ctrl <- lmer(npx ~ day * vax + age_group + sex + cmv + batch + (1 | donor), data = novax)
+summary(fit_ctrl)$coefficients[c("dayDay 7", "dayDay 7:vaxNo vax"), ]
+
+# Figuur: verandering per donor, met vs zonder vaccinatie
+novax %>% select(donor, vax, day, npx) %>%
+  pivot_wider(names_from = day, values_from = npx) %>%
+  mutate(delta = `Day 7` - `Day 0`) %>% filter(!is.na(delta)) %>%
+  ggplot(aes(vax, delta, fill = vax)) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.5, show.legend = FALSE) +
+  geom_jitter(width = 0.15, size = 1, alpha = 0.6, show.legend = FALSE) +
+  labs(x = NULL, y = expression(Delta ~ "NPX (dag 7 - dag 0)"),
+       title = paste("Verandering in", eiwit, "met vs. zonder griepvaccinatie"))
+```
+
+**Hoe lees je dit?** `dayDay 7` = stijging na vaccinatie; `dayDay 7:vaxNo vax` = hoeveel kleiner de stijging is zonder vaccinatie. Zijn ze ongeveer even groot en tegengesteld, dan is er zonder vaccinatie geen stijging. Met vaccinatie stijgt S100A12 met 0,63 (p < 0,001); zonder vaccinatie is de stijging 0,67 kleiner (p < 0,001), dus ongeveer 0. De stijging hoort bij de vaccinatie.
+
+## D7. Resultaten samenvatten
+
+```{r d-summary}
+rij <- function(model, term, naam) {
+  s  <- coef(summary(model))
+  ci <- if (inherits(model, "lm")) confint(model)[term, ] else
+          s[term, "Estimate"] + c(-1.96, 1.96) * s[term, "Std. Error"]   # mixed model: benadering
+  tibble(analyse = naam, schatting = s[term, "Estimate"], BI_laag = ci[1], BI_hoog = ci[2],
+         p = s[term, ncol(s)], N_donoren = if (inherits(model, "lm")) nobs(model) else
+           length(unique(model@frame$donor)))
+}
+bind_rows(
+  rij(fit,        "age_groupOlder Adult",          "Hoofdanalyse: delta ~ leeftijd + geslacht + CMV (jaar 1)"),
+  rij(fit_crude,  "age_groupOlder Adult",          "Ongecorrigeerd: delta ~ leeftijd"),
+  rij(fit_zonder, "age_groupOlder Adult",          "Zonder uitschieter(s) in de residuen"),
+  rij(fit_cellen, "age_groupOlder Adult",          "Gecorrigeerd voor verandering neutrofielen en monocyten"),
+  rij(fit_batch,  "age_groupOlder Adult",          "Enkel paren in dezelfde batch"),
+  rij(fit_mm,     "dayDay 7:age_groupOlder Adult", "Mixed model jaar 1 + 2 (interactie)")
+) %>% mutate(across(where(is.numeric), ~ signif(.x, 3))) %>% knitr::kable()
+```
+
+## D8. Conclusie (sjabloon voor het verslag)
+
+> *Plasma-S100A12 steeg 7 dagen na griepvaccinatie (gemiddeld Δ = 0,65 log2-NPX, 95%-BI 0,46–0,84; p < 0,001; N = 92 donoren). Die respons werd ontdekt in een willekeurige helft van de donoren en bevestigd in de andere helft. Zonder vaccinatie veranderde S100A12 niet (interactie dag × vaccinatie: β = −0,67; p < 0,001). Na correctie voor geslacht en CMV-status was de stijging bij oudere volwassenen kleiner, maar niet significant (β = −0,28; 95%-BI −0,66 tot 0,09; p = 0,14). Dat bleef zo zonder de ene uitschietende donor, na correctie voor veranderingen in neutrofielen en monocyten, in paren uit dezelfde batch, en in een mixed model over twee vaccinatiejaren (interactie β = −0,14; p = 0,31). De richting past bij een zwakkere aangeboren respons bij ouderen, maar de studie had slechts 80% power voor verschillen vanaf ongeveer 0,5 log2-eenheden.*
+
+Gebruik dit als basis en pas het aan in jullie eigen woorden; controleer de getallen in jullie eigen uitvoer.
+
+**Discussion: punten om te bespreken**
+
+- Een niet-significant resultaat betekent **niet** dat er geen verschil is. Verwijs naar de poweranalyse (fase C7): welk effect konden we detecteren?
+- Het eiwit werd data-gedreven gekozen, maar op een criterium (algemene vaccinrespons) dat losstaat van leeftijd, en bevestigd in een onafhankelijke helft van de donoren. Het blijft exploratief onderzoek.
+- Jaar 2 was niet bruikbaar voor vaccinatie-effecten omdat dag en batch er verstrengeld zijn: een beperking van de data, geen keuze.
+- Plasma-S100A12 zegt niet uit welke cellen het komt; celtellingen verklaren de stijging niet, wat eerder op activatie dan op aantal wijst (hypothese voor verder onderzoek).
+- Leeftijd is hier een tweegroepenvergelijking (25–35 vs 55–67 jaar), zonder 80-plussers.
+
+
+
+# Fase E – Vooruitblik: Part 3 en Part 4
+
+Part 3 en 4 bouwen op dezelfde voorbewerkte data. De sterkste projecten hangen samen: de vraag uit Part 2 wordt in Part 3 voor alle eiwitten herhaald, en Part 4 voorspelt een uitkomst die eerder al aan bod kwam.
+
+## E1. Part 3: dezelfde vraag voor alle eiwitten
+
+1. **Eén contrast, één model per eiwit:** `Δ NPX ~ age_group + sex + cmv` op de paren van jaar 1, contrast oud vs jong. Dat is het Part 2-model voor elk eiwit.
+2. **Filter vóór het testen, zonder de groepen te gebruiken:** bv. enkel eiwitten die op de vaccinatie reageren (de screen uit fase C, zonder naar leeftijd te kijken), of op LOD en variantie. Rapporteer hoeveel eiwitten je test.
+3. **limma** (les 3): `design <- model.matrix(~ age_group + sex + cmv, data = paren)`, `lmFit(t(D), design)`, `eBayes()`, `topTable(coef = "age_groupOlder Adult")`.
+4. **Multiple testing:** Benjamini-Hochberg (FDR) voor exploratief werk; Bonferroni als elke vals-positieve duur is.
+5. **Visualiseer:** volcano plot; interpreteer correct ("bij FDR 5% verwachten we dat hoogstens 5% van de gevonden eiwitten vals-positief is").
+
+## E2. Part 4: een voorspellingsmodel
+
+| Stap | Wat je doet | Valkuil bij dataset 1 |
+|---|---|---|
+| Uitkomst kiezen | bv. leeftijdsgroep, CMV-status of geslacht uit het eiwitprofiel | genoeg donoren in elke klasse |
+| Data splitsen | train, validatie en test (één keer, op het einde) | **splits per donor**: samples van dezelfde persoon in train en test = lekkage |
+| Voorbewerken | schalen en filteren enkel op de trainingsdata berekenen | batchcorrectie met de uitkomst in `design` laat label-informatie lekken |
+| Modellen | basismodel (logistische regressie), dan lasso/ridge of random forest | overfitting |
+| Evalueren | confusion matrix, AUC, balanced accuracy (classificatie); RMSE, R² (regressie) | accuracy misleidt bij ongelijke klassen |
+| Interpreteren | coëfficiënten of feature importance | vergelijk met Part 3 |
+
+# Fase F – Verslag, GitHub, verdediging en valkuilen
+
+**Verslag** (max. 5 pagina's zonder referenties, Calibri 11): Introduction (achtergrond, data, vragen), Methods (preprocessing via de beslissingentabel; modellen; verwijzing naar GitHub), Results (kernresultaten van álle delen, een paar goed gekozen figuren), Discussion (betekenis en beperkingen), Conclusion, References. Geen screenshots, verwijs naar elke figuur, interpreteer. Twee versies: met namen (UFORA) en anoniem (FeedbackFruits).
+
+**GitHub:** dit `.Rmd`-bestand plus de gerenderde `.html`, een `README.md` (wat staat waar, hoe uitvoeren) en een map met figuren.
+
+**Verdediging:** 7 minuten presentatie (2 dagen vooraf uploaden), 15 minuten vragen over methode, interpretatie én code. Iedereen moet alles kunnen uitleggen. Oefen de "waarom"-vragen: waarom deze drempel, waarom dit model, waarom N = 92 en niet 184, waarom niet jaar 2?
+
+**Checklist van de grootste valkuilen**
+
+- [ ] N = aantal donoren, niet aantal samples (pseudoreplicatie).
+- [ ] Batch-effect gecontroleerd en verwerkt; nagegaan of batch verstrengeld is met je vergelijking (zoals dag in jaar 2).
+- [ ] Geen filtering op basis van de groepen die je vergelijkt.
+- [ ] Vraag verschilt van het artikel, en de reden voor de vraag staat in het verslag.
+- [ ] Exploratieve aard benoemd; ontdekt en bevestigd op verschillende delen van de data.
+- [ ] Elke preprocessing-beslissing gedocumenteerd en gemotiveerd.
+- [ ] Schatting, 95%-BI, p-waarde en N gerapporteerd; geen causale taal.
+- [ ] Assumpties gecontroleerd en besproken.
+- [ ] Multiple testing gecorrigeerd in Part 3; aantal geteste features vermeld.
+- [ ] Geen lekkage in Part 4.
+- [ ] Figuren publicatieklaar, geen screenshots.
+- [ ] Iedereen kan de hele code uitleggen.
+
+```{r session}
+sessionInfo()   # R-versie en packages (reproduceerbaarheid)
+```
