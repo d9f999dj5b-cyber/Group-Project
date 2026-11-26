@@ -3,7 +3,7 @@ title: "Groepswerk"
 output: html_document
 date: "2026-11-19"
 ---
-
+test
 ```{r}
 library(tidyverse)
 annot <- read_csv("protein_annotation.csv")
